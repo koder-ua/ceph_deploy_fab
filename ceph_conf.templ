@@ -1,0 +1,18 @@
+[global]
+
+fsid = {0.fsid_uuid}
+mon initial members = {0.hostname}
+mon host = {0.mon_ip}
+public network = {0.pub_network}
+cluster network = {0.cluster_network}
+auth cluster required = cephx
+auth service required = cephx
+auth client required = cephx
+
+osd journal size = {0.journal_sz}
+osd pool default size = {0.default_pool_sz}
+osd pool default min size = {0.default_min_sz}
+osd pool default pg num = {0.default_pg_num}
+osd pool default pgp num = {0.default_pgp_num}
+osd crush chooseleaf type = {0.crush_chooseleaf_type}
+osd journal = {0.osd_journal_dev}
