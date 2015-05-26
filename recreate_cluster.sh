@@ -1,45 +1,49 @@
 #!/bin/bash
+set -e
+
 IMGS_DIR=/media/vms/tiny_cloud
 DATA_SZ=5G
 JOURNAL_SZ=1G
-PASSWD=koder
-USER=koder
+
+function usage() {
+	echo "Usage: [util] USER_NAME PASSWORD"
+}
+
+if [ -z "$1" -o -z "$2" ] ; then
+	usage
+	exit 1
+fi 
+
+USER=$1
+PASSWD=$2
+
 BASE_IMG=ubuntu_base.qcow2
 
 # MON_COUNT=1
-OSD_COUNT=2
+OSD_COUNT=3
 LAST_IDX=$(expr $OSD_COUNT - 1)
 OSD_IDXS=$(seq 0 $LAST_IDX)
 
-function stop_cluster() {
-	tcloud stop ceph-mon
+OSD_NAMES=
+for idx in $OSD_IDXS ; do
+	OSD_NAMES="$OSD_NAMES ceph-osd-$idx"
+done
 
-	# parralelize this loop
-	for idx in $OSD_IDXS ; do
-		tcloud stop "ceph-osd-$idx"
-	done
+function stop_cluster() {
+	tcloud stop ceph-mon $OSD_NAMES
 }
 
 function wait_cluster_stopped() {
-	OSD_NAMES="osd-0"
-
-	for idx in $(seq 1 $LAST_IDX) ; do
-		OSD_NAMES="$OSD_NAMES\|osd-$idx"
-	done
-
 	vms="execute first step"
 	while [ ! -z "$vms" ] ; do
-		vms=$(tcloud list | grep "ceph-\(mon\|$OSD_NAMES)")
+		set +e
+		vms=$(tcloud list | grep "ceph-\(mon\|$OSD_NAMES\)")
+		set -e
 	done
 }
 
 function start_cluster() {
-	tcloud start ceph-mon
-
-	# parralelize this loop
-	for idx in $OSD_IDXS ; do
-		tcloud start ceph-osd-$idx
-	done
+	tcloud start ceph-mon $OSD_NAMES
 }
 
 
@@ -89,7 +93,11 @@ function prepare_cluster() {
 	ssh_opts="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 
 	key_file=$(tempfile)
+
+	set +e
 	rm "$key_file"
+	set -e
+
 	ssh-keygen -t rsa -N '' -f "$key_file"
 
 	NAMES="ceph-mon"
@@ -113,8 +121,10 @@ function prepare_cluster() {
 		ssh $ssh_opts "${USER}@${ip}" echo "127.0.1.1 $name" "|" sudo tee -a /etc/hosts
 	done
 
+	set +e
 	rm "$key_file"
 	rm "${key_file}.pub"
+	set -e
 }
 
 
@@ -127,5 +137,3 @@ clear_images
 create_images
 start_cluster
 prepare_cluster
-
- 

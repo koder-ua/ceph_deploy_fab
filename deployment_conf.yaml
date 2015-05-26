@@ -1,13 +1,12 @@
-ceph_release: firefly
+ceph_release: hammer
 clustername: ceph
 fs_type: xfs
-mon_ip: 192.168.152.42
 data_mount_path: /var/lib/ceph/osd/{0.clustername}-{0.osd_num}
 journal_sz: 1024
 default_pool_sz: 2
 default_min_sz: 1
-default_pg_num: 333
-default_pgp_num: 333
+default_pg_num: 128
+default_pgp_num: 128
 crush_chooseleaf_type: 1
 monmap_path: /tmp/{0.clustername}-monmap
 ceph_cfg_path: /etc/ceph/{0.clustername}.conf
