@@ -171,32 +171,20 @@ def deploy_first_mon(conf_path=deployment_config):
 
 @task
 @parallel
-def allocate_osd_id(params, keys):
+def allocate_osd_id(params):
     return run("ceph osd create {0.osd_uuid}".format(params))
 
 
 @task
 @parallel
 def read_config(params, keys):
-    res = {}
     fd = StringIO()
     get(params.ceph_cfg_path, fd)
-    content = fd.getvalue()
-
-    for line in content.split("\n"):
-        if '=' in line:
-            name, val = line.split("=", 1)
-            name = re.sub(r"\s+", name.strip(), " ")
-            val = val.strip()
-
-            if name in keys:
-                res[keys[name]] = val
+    cfg = fd.getvalue()
 
     fd = StringIO()
     get(params.admin_keyring_path, fd)
-    res['admin_keyring_content'] = fd.getvalue()
-
-    return res
+    return cfg, fd.getvalue()
 
 
 def prepare_cmds(commands):
@@ -326,28 +314,16 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     # executed on osd host
     # prepare_node(params.ceph_release)
 
-    keys = {'fsid': 'fsid_uuid', 'mon initial members': 'mons'}
-
     if not exists(params.ceph_cfg_path):
-        res = execute(read_config, params, keys,
-                      hosts=[params.mon_ip])
-        print res
-        for attr, val in res[params.mon_ip].items():
-            setattr(params, attr, val)
-
-        # remove journal section
-        cfg_templ = re.sub(r"(?ims)^osd journal = .*$", "", ceph_config_file_templ)
-
-        # put ceph config
-        osd_config_file = cfg_templ.format(params)
+        cfg, adm = execute(read_config, params, hosts=[params.mon_ip])
 
         put(remote_path=params.ceph_cfg_path,
-            local_path=StringIO(osd_config_file),
+            local_path=StringIO(cfg),
             use_sudo=True)
 
         # put admin keyring
         put(remote_path=params.admin_keyring_path,
-            local_path=StringIO(params.admin_keyring_content),
+            local_path=StringIO(adm),
             use_sudo=True)
 
     run("ceph osd crush add-bucket {0} host".format(params.hostname))
@@ -383,7 +359,7 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     for dev in osd_devs:
         params.osd_uuid = str(uuid.uuid4())
 
-        params.osd_num = execute(allocate_osd_id, params, keys,
+        params.osd_num = execute(allocate_osd_id, params,
                                  hosts=[params.mon_ip])
 
         params.osd_data_dev = dev
