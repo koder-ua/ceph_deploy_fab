@@ -171,10 +171,14 @@ def deploy_first_mon(conf_path=deployment_config):
 
 @task
 @parallel
-def allocate_osd_id_and_read_config(params, keys):
-    res = {'osd_num': run("ceph osd create {0.osd_uuid}".format(params))}
-    # res = {'osd_num': '0'}
+def allocate_osd_id(params, keys):
+    return run("ceph osd create {0.osd_uuid}".format(params))
 
+
+@task
+@parallel
+def read_config(params, keys):
+    res = {}
     fd = StringIO()
     get(params.ceph_cfg_path, fd)
     content = fd.getvalue()
@@ -318,15 +322,19 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     osd_devs = run("ls -1 /dev/sd*").split()
     # select HDD devices
     osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4 and not dev[-1].isdigit()]
-    print osd_devs
-    return
-
-    #osd_devs = ['/dev/sda3', '/dev/sdb', '/dev/sdc']
 
     # executed on osd host
-    prepare_node(params.ceph_release)
+    # prepare_node(params.ceph_release)
+
+    keys = {'fsid': 'fsid_uuid', 'mon initial members': 'mons'}
 
     if not exists(params.ceph_cfg_path):
+        res = execute(read_config, params, keys,
+                      hosts=[params.mon_ip])
+        print res
+        for attr, val in res[params.mon_ip].items():
+            setattr(params, attr, val)
+
         # remove journal section
         cfg_templ = re.sub(r"(?ims)^osd journal = .*$", "", ceph_config_file_templ)
 
@@ -371,17 +379,13 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     ceph -s
     """
 
-    keys = {'fsid': 'fsid_uuid', 'mon initial members': 'mons'}
-
     mp_templ = params.data_mount_path
     for dev in osd_devs:
         params.osd_uuid = str(uuid.uuid4())
 
-        res = execute(allocate_osd_id_and_read_config, params, keys,
-                      hosts=[params.mon_ip])
+        params.osd_num = execute(allocate_osd_id, params, keys,
+                                 hosts=[params.mon_ip])
 
-        for attr, val in res[params.mon_ip].items():
-            setattr(params, attr, val)
         params.osd_data_dev = dev
         params.data_mount_path = mp_templ.format(params)
 
