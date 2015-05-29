@@ -7,14 +7,15 @@ default_pool_sz: 2
 default_min_sz: 1
 default_pg_num: 128
 default_pgp_num: 128
-crush_chooseleaf_type: 1
+# crush_chooseleaf_type: 1
+crush_chooseleaf_type: 0
 monmap_path: /tmp/{0.clustername}-monmap
 ceph_cfg_path: /etc/ceph/{0.clustername}.conf
 mon_keyring_path: /tmp/{0.clustername}.mon.keyring
 admin_keyring_path: /etc/ceph/{0.clustername}.client.admin.keyring
-osd_data_dev: /dev/sdb
-osd_journal_dev: /dev/sdc
+# osd_data_dev: /dev/sdb
+# osd_journal_dev: /dev/sdc
 mount_opst: ""
 osd_weigth: "1.0"
-pub_network: 192.168.152.0/24
-cluster_network: 192.168.152.0/24
+pub_network: 10.20.22.0/24
+cluster_network: 10.20.22.0/24
