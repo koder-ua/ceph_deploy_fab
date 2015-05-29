@@ -177,7 +177,7 @@ def allocate_osd_id(params):
 
 @task
 @parallel
-def read_config(params, keys):
+def read_config(params):
     fd = StringIO()
     get(params.ceph_cfg_path, fd)
     cfg = fd.getvalue()
@@ -310,12 +310,13 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     osd_devs = run("ls -1 /dev/sd*").split()
     # select HDD devices
     osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4 and not dev[-1].isdigit()]
+    osd_devs.remove('/dev/sdaa')
 
     # executed on osd host
     # prepare_node(params.ceph_release)
 
     if not exists(params.ceph_cfg_path):
-        cfg, adm = execute(read_config, params, hosts=[params.mon_ip])
+        cfg, adm = execute(read_config, params, hosts=[params.mon_ip])[params.mon_ip]
 
         put(remote_path=params.ceph_cfg_path,
             local_path=StringIO(cfg),
@@ -360,7 +361,7 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
         params.osd_uuid = str(uuid.uuid4())
 
         params.osd_num = execute(allocate_osd_id, params,
-                                 hosts=[params.mon_ip])
+                                 hosts=[params.mon_ip])[params.mon_ip]
 
         params.osd_data_dev = dev
         params.data_mount_path = mp_templ.format(params)
