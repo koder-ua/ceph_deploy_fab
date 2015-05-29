@@ -317,7 +317,7 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
 
     osd_devs = run("ls -1 /dev/sd*").split()
     # select HDD devices
-    osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4]
+    osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4 and not dev[-1].isdigit()]
     print osd_devs
     return
 
