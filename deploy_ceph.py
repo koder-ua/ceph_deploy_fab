@@ -127,6 +127,12 @@ def deploy_first_mon(conf_path=deployment_config):
         local_path=StringIO(ceph_config_file),
         use_sudo=True)
 
+    if exists(params.monmap_path):
+        sudo("rm -f {0}".format(params.monmap_path))
+
+    if exists(params.mon_keyring_path):
+        sudo("rm -f {0}".format(params.mon_keyring_path))
+
     commands_templ = """
         sudo ceph-authtool --create-keyring {0.mon_keyring_path}
             --gen-key -n mon. --cap mon 'allow *'
@@ -311,7 +317,7 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
 
     osd_devs = run("ls -1 /dev/sd*").split()
     # select HDD devices
-    osd_devs = ['/dev/' + dev for dev in osd_devs if len(os.path.nasename(dev)) == 4]
+    osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4]
     print osd_devs
     return
 
