@@ -1,4 +1,4 @@
-import re
+import sys
 import json
 import uuid
 import os.path
@@ -6,17 +6,11 @@ from StringIO import StringIO
 
 import yaml
 
-from fabric.api import run, sudo, execute, task, get, put, local, env
-from fabric.api import parallel
 from fabric.context_managers import hide
+from fabric.network import disconnect_all
 from fabric.contrib.files import append, exists
-
-
-ceph_config_file_templ_path = os.path.join(os.path.dirname(__file__),
-                                           'ceph_conf.templ')
-deployment_config = os.path.join(os.path.dirname(__file__),
-                                 'deployment_conf.yaml')
-ceph_config_file_templ = open(ceph_config_file_templ_path).read()
+from fabric.api import parallel, put, local, env
+from fabric.api import run, sudo, execute, task, get
 
 
 rpm_repo = """[ceph-noarch]
@@ -54,10 +48,11 @@ def get_distro():
     return 'ubuntu'
 
 
+@task
 def prepare_node(ceph_release):
     if 'rh' == get_distro():
         repo_fc = rpm_repo.format(release='el7', ceph_release=ceph_release)
-
+        sudo("systemctl stop firewalld.service", warn_only=True)
         if not exists('/etc/ceph'):
             sudo("mkdir /etc/ceph")
 
@@ -86,6 +81,12 @@ def prepare_node(ceph_release):
             sudo("apt-get update")
             sudo("apt-get install -y ntp ceph ceph-mds")
 
+    sudo("rm /etc/localtime")
+    sudo("cp /usr/share/zoneinfo/Europe/Kiev /etc/localtime")
+    sudo("service ntpd stop", warn_only=True)
+    sudo("ntpdate pool.ntp.org")
+    sudo("service ntpd start")
+
 
 def get_config(conf_path):
 
@@ -99,24 +100,45 @@ def get_config(conf_path):
     Params.ceph_cfg_path = Params.ceph_cfg_path.format(Params)
     Params.mon_keyring_path = Params.mon_keyring_path.format(Params)
     Params.admin_keyring_path = Params.admin_keyring_path.format(Params)
+    Params.first_mon_ip = Params.mons_ip.split(',')[0].strip()
 
     return Params
 
 
-@task
-def clear_mon(conf_path=deployment_config):
-    pass
+ceph_config_templ = """
+[global]
+
+fsid = {0.fsid_uuid}
+mon initial members = {0.mons}
+mon host = {1}
+public network = {0.pub_network}
+cluster network = {0.cluster_network}
+auth cluster required = cephx
+auth service required = cephx
+auth client required = cephx
+
+osd journal size = {0.journal_sz}
+osd pool default size = {0.default_pool_sz}
+osd pool default min size = {0.default_min_sz}
+osd pool default pg num = {0.default_pg_num}
+osd pool default pgp num = {0.default_pgp_num}
+osd crush chooseleaf type = {0.crush_chooseleaf_type}
+"""
+
+# preparations - hostname, passwordless access
+# -selinux
+# fix sudoers
+# systemctl stop firewalld.service
 
 
 @task
-def deploy_first_mon(conf_path=deployment_config):
-    params = get_config(conf_path)
+def deploy_first_mon(config_path, mon_ip):
+    params = get_config(config_path)
     params.fsid_uuid = str(uuid.uuid4())
-    params.mon_ip = env.host_string
 
     prepare_node(params.ceph_release)
 
-    ceph_config_file = ceph_config_file_templ.format(params)
+    ceph_config_file = ceph_config_templ.format(params, env.host_string)
 
     if params.fs_type == 'ext4':
         ceph_config_file += '\nfilestore xattr use omap = true\n'
@@ -145,7 +167,7 @@ def deploy_first_mon(conf_path=deployment_config):
         sudo ceph-authtool {0.mon_keyring_path} --import-keyring
             {0.admin_keyring_path}
 
-        sudo monmaptool --create --add {0.hostname} {0.mon_ip}
+        sudo monmaptool --clobber --create --add {0.hostname} {1}
             --fsid {0.fsid_uuid} {0.monmap_path}
 
         sudo mkdir /var/lib/ceph/mon/{0.clustername}-{0.hostname}
@@ -155,7 +177,12 @@ def deploy_first_mon(conf_path=deployment_config):
 
         sudo touch "/var/lib/ceph/mon/{0.clustername}-{0.hostname}/done"
 
-        sudo chmod a+r {0.admin_keyring_path}"""
+        sudo chmod a+r {0.admin_keyring_path}
+
+        sudo rm {0.monmap_path}
+
+        sudo rm {0.mon_keyring_path}
+        """
 
     if 'rh' == get_distro():
         commands_templ += "\n\nsudo touch /var/lib/ceph/mon/{0.clustername}-{0.hostname}/sysvinit" + \
@@ -165,7 +192,7 @@ def deploy_first_mon(conf_path=deployment_config):
 
     commands_templ += """\n\nceph osd lspools\n\nceph -s"""
 
-    for cmd in prepare_cmds(commands_templ.format(params)):
+    for cmd in prepare_cmds(commands_templ.format(params, mon_ip)):
         run(cmd)
 
 
@@ -202,7 +229,7 @@ def listdir_remote(path):
 
 @task
 @parallel
-def start_osd_after_reboot(conf_path=deployment_config):
+def start_osd_after_reboot(conf_path):
     params = get_config(conf_path)
     mount_dir, mount_point = params.data_mount_path.rsplit('/', 1)
 
@@ -230,93 +257,89 @@ def start_osd_after_reboot(conf_path=deployment_config):
         run(cmd)
 
 
-# @task
-# @parallel
-# def add_new_osd(mon_ip, conf_path=deployment_config):
-#     params = get_config(conf_path)
-#     params.osd_uuid = str(uuid.uuid4())
-#     params.mon_ip = mon_ip
+@task
+def clear_node(conf_path):
+    params = get_config(conf_path)
+    mount_dir, _ = params.data_mount_path.rsplit('/', 1)
 
-#     # executed on mon host
+    # # stop all services
+    # for line in run("/etc/init.d/ceph status").split("\n"):
+    #     line = line.strip()
+    #     if line.startswith("===") and line.endswith("==="):
+    #         name = line.split()[1]
+    #         sudo('/etc/init.d/ceph stop ' + name, warn_only=True)
+    sudo('/etc/init.d/ceph stop', warn_only=True)
 
-#     keys = {'fsid': 'fsid_uuid', 'mon initial members': 'mons'}
+    # umount all ceph devices
+    # for line in run('mount'):
+    #     dev, _, path, rest = line.strip().split(" ", 3)
+    #     if path.startswith(mount_dir):
+    #         sudo('umount ' + dev, warn_only=True)
 
-#     res = execute(allocate_osd_id_and_read_config, params, keys,
-#                   hosts=[params.mon_ip])
+    for dev in params.osd.get(params.hostname, {}).get('storage', "").split():
+        sudo('umount ' + dev, warn_only=True)
 
-#     for attr, val in res[params.mon_ip].items():
-#         setattr(params, attr, val)
+    if 'rh' == get_distro():
+        sudo("yum -y remove ceph ceph-deploy", warn_only=True)
+    else:
+        sudo("apt-get remove -y ceph ceph-mds ceph-deploy")
 
-#     # executed on osd host
-#     prepare_node(params.ceph_release)
+    sudo("rm -rf /etc/ceph", warn_only=True)
+    sudo("rm -rf /var/lib/ceph", warn_only=True)
+    sudo("rm -rf /var/run/ceph", warn_only=True)
 
-#     # put ceph config
-#     osd_config_file = ceph_config_file_templ.format(params)
 
-#     put(remote_path=params.ceph_cfg_path,
-#         local_path=StringIO(osd_config_file),
-#         use_sudo=True)
+@task
+def remove_radosgw():
+    sudo("systemctl stop httpd", warn_only=True)
+    sudo("yum -y remove httpd mod_ssl openssl ceph-radosgw radosgw-agent")
+    sudo("rm -rf /etc/httpd", warn_only=True)
+    sudo("rm /etc/pki/tls/certs/ca.crt", warn_only=True)
+    sudo("rm /etc/pki/tls/private/ca.key", warn_only=True)
+    sudo("rm ca.csr /etc/pki/tls/private/ca.csr", warn_only=True)
 
-#     # put admin keyring
-#     put(remote_path=params.admin_keyring_path,
-#         local_path=StringIO(params.admin_keyring_content),
-#         use_sudo=True)
 
-#     params.data_mount_path = params.data_mount_path.format(params)
+@task
+def up_node(conf_path):
+    params = get_config(conf_path)
 
-#     commands_templ = """
-#     sudo mkdir -p {0.data_mount_path}
+    for dev in params.osd.get(params.hostname, {}).get('storage', "").split():
+        sudo('mount ' + dev, warn_only=True)
 
-#     sudo mkfs -t {0.fs_type} {0.osd_data_dev}
+    mount_dir, _ = params.data_mount_path.rsplit('/', 1)
+    # stop all services
+    for line in run("/etc/init.d/ceph status").split("\n"):
+        line = line.strip()
+        if line.startswith("===") and line.endswith("==="):
+            name = line.split()[1]
+            sudo('/etc/init.d/ceph stop ' + name, warn_only=True)
 
-#     sudo mount {0.mount_opst} {0.osd_data_dev} {0.data_mount_path}
+    # umount all ceph devices
+    for line in run('mount'):
+        dev, _, path, rest = line.strip().split(" ", 3)
+        if path.startswith(mount_dir):
+            sudo('umount ' + dev, warn_only=True)
 
-#     sudo ceph-osd -c {0.ceph_cfg_path} -i {0.osd_num}
-#         --cluster {0.clustername} --mkfs --mkkey --osd-uuid {0.osd_uuid}
+    if 'rh' == get_distro():
+        sudo("yum -y remove ceph ceph-deploy", warn_only=True)
+    else:
+        sudo("apt-get remove -y ceph ceph-mds ceph-deploy", warn_only=True)
 
-#     sudo ceph auth add osd.{0.osd_num} osd 'allow *' mon 'allow profile osd' -i
-#         /var/lib/ceph/osd/{0.clustername}-{0.osd_num}/keyring
-
-#     ceph osd crush add-bucket {0.hostname} host
-
-#     ceph osd crush move {0.hostname} root=default
-#     """
-
-#     if 'rh' == get_distro():
-#         # "\n\nsudo touch /var/lib/ceph/mon/{0.clustername}-{0.hostname}/sysvinit"
-#         commands_templ += "\n\nsudo /etc/init.d/ceph start osd.{0.hostname}"""
-#     else:
-#         commands_templ += "\n\nsudo start ceph-osd id={0.osd_num}"
-
-#     commands_templ += """
-#     ceph osd crush add {0.osd_num} {0.osd_weigth} host={0.hostname}
-
-#     ceph -s
-#     """
-
-#     for cmd in prepare_cmds(commands_templ.format(params)):
-#         run(cmd)
+    sudo("rm -rf /etc/ceph", warn_only=True)
+    sudo("rm -rf /var/lib/ceph", warn_only=True)
+    sudo("rm -rf /var/run/ceph", warn_only=True)
 
 
 @task
 @parallel
-def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
+def add_new_osd(conf_path):
     params = get_config(conf_path)
     assert params.fs_type == 'xfs'
-    params.mon_ip = mon_ip
-
-    # executed on mon host
-
-    osd_devs = run("ls -1 /dev/sd*").split()
-    # select HDD devices
-    osd_devs = [dev for dev in osd_devs if len(os.path.basename(dev)) == 4 and not dev[-1].isdigit()]
-    osd_devs.remove('/dev/sdaa')
-
-    # executed on osd host
-    # prepare_node(params.ceph_release)
+    mon_ip = params.first_mon_ip
 
     if not exists(params.ceph_cfg_path):
-        cfg, adm = execute(read_config, params, hosts=[params.mon_ip])[params.mon_ip]
+        prepare_node(params.ceph_release)
+        cfg, adm = execute(read_config, params, hosts=[mon_ip])[mon_ip]
 
         put(remote_path=params.ceph_cfg_path,
             local_path=StringIO(cfg),
@@ -357,13 +380,27 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
     """
 
     mp_templ = params.data_mount_path
-    for dev in osd_devs:
+
+    storage_devs = params.osd[params.hostname]['storage'].split(" ")
+
+    if 'journal' in params.osd[params.hostname]:
+        j_devs = params.osd[params.hostname]['journal'].split(" ")
+
+        assert len(storage_devs) == len(j_devs)
+        assert len(set(storage_devs)) == len(storage_devs)
+        assert len(set(j_devs)) == len(j_devs)
+    else:
+        j_devs = [None] * len(storage_devs)
+
+    print storage_devs, j_devs
+
+    for stor, _ in zip(storage_devs, j_devs):
         params.osd_uuid = str(uuid.uuid4())
 
         params.osd_num = execute(allocate_osd_id, params,
-                                 hosts=[params.mon_ip])[params.mon_ip]
+                                 hosts=[mon_ip])[mon_ip]
 
-        params.osd_data_dev = dev
+        params.osd_data_dev = stor
         params.data_mount_path = mp_templ.format(params)
 
         for cmd in prepare_cmds(commands_templ.format(params)):
@@ -371,7 +408,7 @@ def netapp_add_new_osd(mon_ip, conf_path=deployment_config):
 
 
 @task
-def gather_ceph_config(conf_path=deployment_config):
+def gather_ceph_config(conf_path):
     params = get_config(conf_path)
     ceph_cfg_dir = os.path.dirname(params.ceph_cfg_path)
 
@@ -394,7 +431,7 @@ def gather_ceph_config(conf_path=deployment_config):
 
 
 @task
-def radosgw_centos(conf_path=deployment_config):
+def radosgw_centos():
     sudo("yum -y install httpd mod_ssl openssl")
     name = run("hostname -f")
 
@@ -411,9 +448,9 @@ def radosgw_centos(conf_path=deployment_config):
     if not exists("/etc/pki/tls"):
         sudo("mkdir -p /etc/pki/tls")
 
-    sudo("cp ca.crt /etc/pki/tls/certs")
-    sudo("cp ca.key /etc/pki/tls/private/ca.key")
-    sudo("cp ca.csr /etc/pki/tls/private/ca.csr")
+    sudo("mv ca.crt /etc/pki/tls/certs")
+    sudo("mv ca.key /etc/pki/tls/private/ca.key")
+    sudo("mv ca.csr /etc/pki/tls/private/ca.csr")
 
     fd = StringIO()
     get("/etc/httpd/conf.d/ssl.conf", fd)
@@ -440,9 +477,11 @@ def radosgw_centos(conf_path=deployment_config):
 
     sudo ceph-authtool /etc/ceph/ceph.client.radosgw.keyring -n client.radosgw.gateway --gen-key
 
-    sudo ceph-authtool -n client.radosgw.gateway --cap osd 'allow rwx' --cap mon 'allow rwx' /etc/ceph/ceph.client.radosgw.keyring
+    sudo ceph-authtool -n client.radosgw.gateway --cap osd 'allow rwx'
+        --cap mon 'allow rwx' /etc/ceph/ceph.client.radosgw.keyring
 
-    sudo ceph -k /etc/ceph/ceph.client.admin.keyring auth add client.radosgw.gateway -i /etc/ceph/ceph.client.radosgw.keyring
+    sudo ceph -k /etc/ceph/ceph.client.admin.keyring auth add
+        client.radosgw.gateway -i /etc/ceph/ceph.client.radosgw.keyring
     """
 
     # sudo chown apache:apache /var/log/radosgw/client.radosgw.gateway.log
@@ -465,7 +504,6 @@ def radosgw_centos(conf_path=deployment_config):
     sudo("mkdir -p /var/lib/ceph/radosgw/ceph-radosgw.gateway")
     sudo("chown apache:apache /var/run/ceph")
 
-    # https://www.shell-tips.com/2014/09/08/sudo-sorry-you-must-have-a-tty-to-run-sudo/
     sudo("/etc/init.d/ceph-radosgw start")
 
     # update config on all nodes
@@ -499,30 +537,43 @@ def radosgw_centos(conf_path=deployment_config):
     sudo('radosgw-admin subuser create --uid=testuser --subuser=testuser:swift')
     swift_key = sudo("radosgw-admin key create --subuser=testuser:swift --key-type=swift --gen-secret")
     data = json.loads(swift_key)
-    key = data['swift_keys'][0]["secret_key"]
+    print "Swift key", data['swift_keys'][0]["secret_key"]
 
-    sudo("yum -y install python-setuptools")
-    sudo("easy_install pip")
-    sudo("pip install --upgrade setuptools")
-    sudo("pip install --upgrade python-swiftclient")
-    run("swift -A http://{0}/auth/1.0 -U testuser:swift -K '{1}' list".format(name, key))
+    # sudo("yum -y install python-setuptools")
+    # sudo("easy_install pip")
+    # sudo("pip install --upgrade setuptools")
+    # sudo("pip install --upgrade python-swiftclient")
+    # run("swift -A http://{0}/auth/1.0 -U testuser:swift -K '{1}' list".format(name, key))
 
 
-@task
-@parallel
-def add_new_radosgw(conf_path=deployment_config):
-    sudo("apt-get install apache2 libapache2-mod-fastcgi openssl " +
-         "ssl-cert radosgw radosgw-agent")
+if __name__ == "__main__":
+    cmd = sys.argv[1]
+    conf_path = sys.argv[2]
+    cfg = yaml.load(open(conf_path).read())
+    env.user = 'root'
 
-    fqdn = run("hostname -f")
-    append('/etc/apache2/apache2.conf', "ServerName " + fqdn)
-    sudo("a2enmod rewrite")
-    sudo("a2enmod fastcgi")
-    sudo("a2enmod ssl")
-    sudo("mkdir /etc/apache2/ssl")
-    sudo("openssl req -x509 -nodes -days 365 -newkey rsa:2048 " +
-         "-keyout /etc/apache2/ssl/apache.key -out " +
-         "/etc/apache2/ssl/apache.crt")
-    sudo("service apache2 restart")
+    if cmd == 'clear':
 
-    # config radosgw
+        for host in cfg.get('rgw', "").split():
+            execute(remove_radosgw, hosts=[host])
+
+        mon_hosts = [host.strip() for host in cfg['mons'].split()]
+        osd_hosts = [host.strip() for host in cfg['osd']]
+
+        for host in set(osd_hosts + mon_hosts):
+            execute(clear_node, conf_path, hosts=[host])
+    else:
+        assert cmd == 'install'
+        first_mon = cfg['mons'].split(',')[0].strip()
+        first_mon_ip = cfg['mons_ip'].split(',')[0].strip()
+
+        execute(deploy_first_mon, conf_path, first_mon_ip,
+                hosts=[first_mon])
+
+        for host, _ in cfg['osd'].items():
+            execute(add_new_osd, conf_path, hosts=[host])
+
+        for host in cfg['rgw'].split():
+            execute(radosgw_centos, hosts=[host])
+
+    disconnect_all()
