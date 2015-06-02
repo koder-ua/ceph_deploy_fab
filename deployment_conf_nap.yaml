@@ -15,37 +15,38 @@ admin_keyring_path: /etc/ceph/{0.clustername}.client.admin.keyring
 mount_opst: ""
 osd_weigth: "1.0"
 
-# pub_network: 192.168.124.0/24
-# cluster_network: 192.168.126.0/24
+pub_network: 192.168.124.0/24
+cluster_network: 192.168.126.0/24
 
-# mons: ictk0103r720-7
-# mons_ip: 10.251.230.17
-# osd:
-#     "ictk0103r720-7":
-#         storage: /dev/sdaa /dev/sdab /dev/sdac /dev/sdad /dev/sdae /dev/sdaf /dev/sdag /dev/sdah
-
-#     "ictk0103r720-8":
-#         storage: /dev/sdai /dev/sdaj /dev/sdak /dev/sdal /dev/sdam /dev/sdan /dev/sdao /dev/sdap /dev/sdaq
-
-#     "ictk0103r720-9":
-#         storage: /dev/sdar /dev/sdas /dev/sdat /dev/sdau /dev/sdav /dev/sdaw /dev/sdax /dev/sday /dev/sdaz
-
-#     "ictk0103r720-10":
-#         storage: /dev/sdba /dev/sdbb /dev/sdbc /dev/sdbd /dev/sdbe /dev/sdbf /dev/sdbg /dev/sdbh /dev/sdbi
-
-
-pub_network: 10.20.22.0/24
-cluster_network: 10.20.22.0/24
-mons: koder-centos-ceph0
-rgw: koder-centos-ceph0
-mons_ip: 10.20.22.149
+mons: ictk0103r720-7
+mons_ip: 10.251.230.17
+rgw: ictk0103r720-7
 osd:
-    koder-centos-ceph0:
-        storage: /dev/sdb /dev/sdc /dev/sdd
+    "ictk0103r720-7":
+        storage: /dev/sdaa /dev/sdab /dev/sdac /dev/sdad /dev/sdae /dev/sdaf /dev/sdag /dev/sdah
 
-    koder-centos-ceph1:
-        storage: /dev/sdb /dev/sdc /dev/sdd
+    "ictk0103r720-8":
+        storage: /dev/sdai /dev/sdaj /dev/sdak /dev/sdal /dev/sdam /dev/sdan /dev/sdao /dev/sdap /dev/sdaq
 
-    koder-centos-ceph2:
-        storage: /dev/sdb /dev/sdc /dev/sdd
+    "ictk0103r720-9":
+        storage: /dev/sdar /dev/sdas /dev/sdat /dev/sdau /dev/sdav /dev/sdaw /dev/sdax /dev/sday /dev/sdaz
+
+    "ictk0103r720-10":
+        storage: /dev/sdba /dev/sdbb /dev/sdbc /dev/sdbd /dev/sdbe /dev/sdbf /dev/sdbg /dev/sdbh /dev/sdbi
+
+
+# pub_network: 10.20.22.0/24
+# cluster_network: 10.20.22.0/24
+# mons: koder-centos-ceph0
+# rgw: koder-centos-ceph0
+# mons_ip: 10.20.22.149
+# osd:
+#     koder-centos-ceph0:
+#         storage: /dev/sdb /dev/sdc /dev/sdd
+
+#     koder-centos-ceph1:
+#         storage: /dev/sdb /dev/sdc /dev/sdd
+
+#     koder-centos-ceph2:
+#         storage: /dev/sdb /dev/sdc /dev/sdd
 
