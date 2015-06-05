@@ -1,0 +1,9 @@
+storage_nodes:
+    koder-centos-swift:
+        ip: 10.20.22.150
+        devs:
+            '/dev/sda2': /srv/node/sda2
+
+proxy_nodes:
+    koder-centos-swift: 10.20.22.150
+
