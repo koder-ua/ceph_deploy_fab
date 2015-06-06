@@ -2,15 +2,16 @@ import sys
 import uuid
 import hashlib
 import urllib2
+import os.path
 from StringIO import StringIO
 
 import yaml
 
-from fabric.context_managers import cd
 from fabric.api import run, sudo, task
 from fabric.network import disconnect_all
+from fabric.context_managers import cd, hide
 from fabric.contrib.files import append, exists
-from fabric.api import parallel, put, env, execute
+from fabric.api import parallel, put, env, execute, get
 
 
 def get_distro():
@@ -20,10 +21,23 @@ def get_distro():
 
 
 class Node(object):
-    def __init__(self, name, ip, dev2dir=None):
+    def __init__(self, name, ip):
         self.name = name
         self.ip = ip
-        self.dev2dir = {} if dev2dir is None else dev2dir
+
+
+class Storage(Node):
+    def __init__(self, name, ip, rsync_ip, mount_root, devs):
+        Node.__init__(self, name, ip)
+        self.name = name
+        self.ip = ip
+        self.rsync_ip = rsync_ip
+
+        self.dev2dir = {}
+        for dev in devs:
+            mpoint = os.path.join(mount_root, dev)
+            dev_file = os.path.join("/dev", dev)
+            self.dev2dir[dev_file] = mpoint
 
 
 class Nodes(object):
@@ -34,16 +48,19 @@ class Nodes(object):
         self.all_ip = set()
 
 
+# parallel = lambda x: x
+
+
 @task
 @parallel
 def prepare():
     if 'rh' == get_distro():
         sudo("systemctl stop firewalld.service", warn_only=True)
-        # with hide('stdout', 'stderr'):
-        #     sudo("yum -y install epel-release")
-        #     sudo("yum -y install http://rdo.fedorapeople.org/openstack-kilo/rdo-release-kilo.rpm")
-        #     sudo("yum -y upgrade")
-        #     sudo("yum -y install ntp openstack-selinux")
+        with hide('stdout', 'stderr'):
+            sudo("yum -y install epel-release")
+            sudo("yum -y install http://rdo.fedorapeople.org/openstack-kilo/rdo-release-kilo.rpm")
+            sudo("yum -y upgrade")
+            sudo("yum -y install ntp")
 
     sudo("groupadd swift")
     sudo("useradd swift -g swift -M -n")
@@ -66,13 +83,18 @@ def load_cfg(path):
 
     for name, node_config in cfg['storage_nodes'].items():
         ip = node_config['ip'].strip()
-        nodes.storage.append(Node(name, ip, node_config['devs']))
+        rsync_ip = node_config['rsync_ip'].strip()
+
+        nodes.storage.append(
+            Storage(name, ip, rsync_ip,
+                    node_config['root_dir'],
+                    node_config['devs']))
+
         nodes.all_ip.add(ip)
 
     for name, ip in cfg['proxy_nodes'].items():
         nodes.proxy.append(Node(name, ip.strip()))
         nodes.all_ip.add(ip.strip())
-
     nodes.controler = nodes.proxy[0]
 
     return nodes, cfg
@@ -85,7 +107,7 @@ def get_ips(runner=run):
 
 @task
 @parallel
-def deploy_controller():
+def deploy_proxy():
     # openstack user create --password-prompt swift
     # openstack role add --project service --user swift admin
     # openstack service create --name swift --description "OpenStack Object Storage" object-store
@@ -105,6 +127,24 @@ def deploy_controller():
     put(remote_path='/etc/swift/proxy-server.conf',
         local_path=StringIO(prox),
         use_sudo=True)
+
+
+@task
+@parallel
+def store_rings(account, container, object):
+    put(remote_path='/etc/swift/account.ring.gz',
+        local_path=StringIO(account),
+        use_sudo=True)
+
+    put(remote_path='/etc/swift/container.ring.gz',
+        local_path=StringIO(account),
+        use_sudo=True)
+
+    put(remote_path='/etc/swift/object.ring.gz',
+        local_path=StringIO(account),
+        use_sudo=True)
+
+    sudo("chown -R swift:swift /etc/swift")
 
 
 def setup_rings(config_path):
@@ -131,10 +171,25 @@ def setup_rings(config_path):
             sudo("swift-ring-builder {ring}".format(ring=ring), user='swift')
             sudo("swift-ring-builder {ring} rebalance".format(ring=ring), user='swift')
 
-        for ip in set(nodes.all_ip) - set(get_ips().split()):
-            for fname in ['account.ring.gz', 'container.ring.gz', 'object.ring.gz']:
-                sudo("scp {0} {1}:/etc/swift/{0}".format(fname, ip))
-            sudo("ssh {0} chown -r swift:swift /etc/swift".format(ip))
+        all_ips = set(nodes.all_ip) - set(get_ips().split())
+
+        account_sio = StringIO()
+        get(remote_path='account.ring.gz',
+            local_path=account_sio)
+
+        container_sio = StringIO()
+        get(remote_path='container.ring.gz',
+            local_path=container_sio)
+
+        object_sio = StringIO()
+        get(remote_path='object.ring.gz',
+            local_path=object_sio)
+
+        execute(store_rings,
+                account_sio.getvalue(),
+                container_sio.getvalue(),
+                object_sio.getvalue(),
+                hosts=all_ips)
 
 
 rsync_conf_templ = """
@@ -142,7 +197,7 @@ uid = swift
 gid = swift
 log file = /var/log/rsyncd.log
 pid file = /var/run/rsyncd.pid
-address = {manage_ip}
+address = {rsync_ip}
 
 [account]
 max connections = 2
@@ -198,7 +253,7 @@ def deploy_storage(config_path):
         sudo("mount " + mount_path)
         sudo("chown -R swift:swift " + mount_path)
 
-    rsync_conf = rsync_conf_templ.format(manage_ip=node.ip)
+    rsync_conf = rsync_conf_templ.format(rsync_ip=node.rsync_ip)
     put(remote_path='/etc/rsyncd.conf',
         local_path=StringIO(rsync_conf),
         use_sudo=True)
@@ -298,10 +353,10 @@ if __name__ == "__main__":
     if cmd == 'clear':
         pass
     else:
-        execute(prepare, hosts=nodes.all_ip)
+        # execute(prepare, hosts=nodes.all_ip)
 
-        execute(deploy_controller,
-                hosts=[nodes.controler.ip])
+        execute(deploy_proxy,
+                hosts=[proxy.ip for proxy in nodes.proxy])
 
         execute(deploy_storage, conf_path,
                 hosts=[storage.ip for storage in nodes.storage])

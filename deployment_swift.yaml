@@ -1,9 +1,24 @@
 storage_nodes:
-    koder-centos-swift:
-        ip: 10.20.22.150
-        devs:
-            '/dev/sda2': /srv/node/sda2
+    koder-centos-ceph0:
+        ip: 10.20.22.149
+        rsync_ip: 10.20.123.128
+        root_dir: /srv/node
+        devs: [sdd, sdb, sdc]
+
+    koder-centos-ceph1:
+        ip: 10.20.22.141
+        rsync_ip: 10.20.123.129
+        root_dir: /srv/node
+        devs: [sdd, sdb, sdc]
+
+    koder-centos-ceph2:
+        ip: 10.20.22.148
+        rsync_ip: 10.20.123.130
+        root_dir: /srv/node
+        devs: [sdd, sdb, sdc]
 
 proxy_nodes:
-    koder-centos-swift: 10.20.22.150
+    koder-centos-ceph0: 10.20.22.149
+    koder-centos-ceph1: 10.20.22.141
+    koder-centos-ceph2: 10.20.22.148
 
