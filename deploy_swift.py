@@ -131,19 +131,11 @@ def deploy_proxy():
 
 @task
 @parallel
-def store_rings(account, container, object):
-    put(remote_path='/etc/swift/account.ring.gz',
-        local_path=StringIO(account),
-        use_sudo=True)
-
-    put(remote_path='/etc/swift/container.ring.gz',
-        local_path=StringIO(account),
-        use_sudo=True)
-
-    put(remote_path='/etc/swift/object.ring.gz',
-        local_path=StringIO(account),
-        use_sudo=True)
-
+def store_rings(files):
+    for fname, data in files.items():
+        put(remote_path='/etc/swift/' + fname,
+            local_path=StringIO(data.getvalue()),
+            use_sudo=True)
     sudo("chown -R swift:swift /etc/swift")
 
 
@@ -159,6 +151,9 @@ def setup_rings(config_path):
     sudo("chown -R swift:swift /etc/swift")
 
     with cd("/etc/swift"):
+        files = ['account.ring.gz', 'container.ring.gz', 'object.ring.gz',
+                 'account.builder', 'container.builder', 'object.builder']
+        run("rm -f " + " ".join(files))
         ring_port = [('account.builder', 6002),
                      ('container.builder', 6001),
                      ('object.builder', 6000)]
@@ -168,28 +163,19 @@ def setup_rings(config_path):
             sudo("swift-ring-builder {ring} create 10 3 1".format(ring=ring), user='swift')
             forall_devs("swift-ring-builder {ring} add r1z1-{{ip}}:{port}/{{dev}} 100".format(
                 ring=ring, port=port))
-            sudo("swift-ring-builder {ring}".format(ring=ring), user='swift')
             sudo("swift-ring-builder {ring} rebalance".format(ring=ring), user='swift')
+            sudo("swift-ring-builder {ring}".format(ring=ring), user='swift')
 
-        all_ips = set(nodes.all_ip) - set(get_ips().split())
+        all_ips = list(set(nodes.all_ip) - set(get_ips().split()))
 
-        account_sio = StringIO()
-        get(remote_path='account.ring.gz',
-            local_path=account_sio)
+        if len(all_ips) > 0:
+            dt = {}
+            for fname in files:
+                dt[fname] = StringIO()
+                get(remote_path='account.ring.gz',
+                    local_path=dt[fname])
 
-        container_sio = StringIO()
-        get(remote_path='container.ring.gz',
-            local_path=container_sio)
-
-        object_sio = StringIO()
-        get(remote_path='object.ring.gz',
-            local_path=object_sio)
-
-        execute(store_rings,
-                account_sio.getvalue(),
-                container_sio.getvalue(),
-                object_sio.getvalue(),
-                hosts=all_ips)
+            execute(store_rings, dt, hosts=all_ips)
 
 
 rsync_conf_templ = """
@@ -224,10 +210,53 @@ swift_dir = /etc/swift
 devices = /srv/node"""
 
 
+cont_cfg = """bind_ip = 0.0.0.0
+user = swift
+swift_dir = /etc/swift
+devices = /srv/node"""
+
+
 obj_cfg = """bind_ip = 0.0.0.0
 user = swift
 swift_dir = /etc/swift
 devices = /srv/node"""
+
+
+def setup_configs():
+    url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/account-server.conf-sample?h=stable/kilo"
+    acc = urllib2.urlopen(url).read()
+    acc = acc.replace("# bind_ip = 0.0.0.0", acc_cfg)
+    acc = acc.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
+    put(remote_path='/etc/swift/account-server.conf',
+        local_path=StringIO(acc),
+        use_sudo=True)
+
+    url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/container-server.conf-sample?h=stable/kilo"
+    acc = urllib2.urlopen(url).read()
+    acc = acc.replace("# bind_ip = 0.0.0.0", cont_cfg)
+    acc = acc.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
+    put(remote_path='/etc/swift/container-server.conf',
+        local_path=StringIO(acc),
+        use_sudo=True)
+
+    url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/object-server.conf-sample?h=stable/kilo"
+    obj_c = urllib2.urlopen(url).read()
+    obj_c = obj_c.replace("# bind_ip = 0.0.0.0", obj_cfg)
+    put(remote_path='/etc/swift/object-server.conf',
+        local_path=StringIO(obj_c),
+        use_sudo=True)
+
+    sudo("curl -o /etc/swift/container-reconciler.conf " +
+         "https://git.openstack.org/cgit/openstack/swift/plain/etc/container-reconciler.conf-sample?h=stable/kilo")
+
+    sudo("curl -o /etc/swift/object-expirer.conf " +
+         "https://git.openstack.org/cgit/openstack/swift/plain/etc/object-expirer.conf-sample?h=stable/kilo")
+
+
+@task
+@parallel
+def setup_configs_task():
+    setup_configs()
 
 
 @task
@@ -245,8 +274,12 @@ def deploy_storage(config_path):
     sudo("yum -y install xfsprogs rsync openstack-swift-account" +
          " openstack-swift-container openstack-swift-object")
 
+    devs = [line.split()[0] for line in run("mount").split("\n")]
+
     for dev, mount_path in node.dev2dir.items():
-        sudo("mkfs.xfs " + dev)
+        if dev in devs:
+            continue
+        sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
         line = "{0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0\n".format(dev, mount_path)
         append("/etc/fstab", line, use_sudo=True)
@@ -261,30 +294,7 @@ def deploy_storage(config_path):
     sudo("systemctl enable rsyncd.service")
     sudo("systemctl start rsyncd.service")
 
-    url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/account-server.conf-sample?h=stable/kilo"
-    acc = urllib2.urlopen(url).read()
-    acc = acc.replace("# bind_ip = 0.0.0.0", acc_cfg)
-    acc = acc.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
-    put(remote_path='/etc/swift/account-server.conf',
-        local_path=StringIO(acc),
-        use_sudo=True)
-
-    sudo("curl -o /etc/swift/container-server.conf " +
-         "https://git.openstack.org/cgit/openstack/swift/plain/etc/container-server.conf-sample?h=stable/kilo")
-
-    url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/object-server.conf-sample?h=stable/kilo"
-    obj_c = urllib2.urlopen(url).read()
-    obj_c = obj_c.replace("# bind_ip = 0.0.0.0", obj_cfg)
-    put(remote_path='/etc/swift/object-server.conf',
-        local_path=StringIO(obj_c),
-        use_sudo=True)
-
-    sudo("curl -o /etc/swift/container-reconciler.conf " +
-         "https://git.openstack.org/cgit/openstack/swift/plain/etc/container-reconciler.conf-sample?h=stable/kilo")
-
-    sudo("curl -o /etc/swift/object-expirer.conf " +
-         "https://git.openstack.org/cgit/openstack/swift/plain/etc/object-expirer.conf-sample?h=stable/kilo")
-
+    setup_configs()
     sudo("mkdir -p /var/cache/swift")
 
 
@@ -302,30 +312,43 @@ def start_proxy(swift_cfg):
 
 @task
 @parallel
+def stop_proxy():
+    sudo("systemctl stop openstack-swift-proxy.service memcached.service", warn_only=True)
+
+
+storage_services = """
+    openstack-swift-account.service
+    openstack-swift-account-auditor.service 
+    openstack-swift-account-reaper.service
+    openstack-swift-account-replicator.service
+    openstack-swift-container.service
+    openstack-swift-container-auditor.service
+    openstack-swift-container-replicator.service
+    openstack-swift-container-updater.service
+    openstack-swift-object.service
+    openstack-swift-object-auditor.service
+    openstack-swift-object-replicator.service
+    openstack-swift-object-updater.service"""
+
+storage_services = " ".join(storage_services.split())
+
+
+@task
+@parallel
 def start_storage(swift_cfg):
     put(remote_path='/etc/swift/swift.conf',
         local_path=StringIO(swift_cfg),
         use_sudo=True)
     sudo("chown -R swift:swift /etc/swift /var/cache/swift")
 
-    services = """
-        openstack-swift-account.service
-        openstack-swift-account-auditor.service
-        openstack-swift-account-reaper.service
-        openstack-swift-account-replicator.service
-        openstack-swift-container.service
-        openstack-swift-container-auditor.service
-        openstack-swift-container-replicator.service
-        openstack-swift-container-updater.service
-        openstack-swift-object.service
-        openstack-swift-object-auditor.service
-        openstack-swift-object-replicator.service
-        openstack-swift-object-updater.service"""
+    sudo("systemctl enable " + storage_services)
+    sudo("systemctl start " + storage_services)
 
-    services = " ".join(services.split())
 
-    sudo("systemctl enable " + services)
-    sudo("systemctl start " + services)
+@task
+@parallel
+def stop_storage():
+    sudo("systemctl stop " + storage_services, warn_only=True)
 
 
 def finalize(nodes):
@@ -355,10 +378,24 @@ if __name__ == "__main__":
     else:
         # execute(prepare, hosts=nodes.all_ip)
 
+        execute(stop_storage,
+                hosts=[storage.ip for storage in nodes.storage])
+        execute(stop_proxy,
+                hosts=[proxy.ip for proxy in nodes.proxy])
+
         execute(deploy_proxy,
                 hosts=[proxy.ip for proxy in nodes.proxy])
 
         execute(deploy_storage, conf_path,
+                hosts=[storage.ip for storage in nodes.storage])
+
+        # execute(stop_storage,
+        #         hosts=[storage.ip for storage in nodes.storage])
+
+        # execute(stop_proxy,
+        #         hosts=[storage.ip for storage in nodes.storage])
+
+        execute(setup_configs,
                 hosts=[storage.ip for storage in nodes.storage])
 
         execute(setup_rings, conf_path,
