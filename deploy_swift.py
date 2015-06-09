@@ -261,6 +261,19 @@ def setup_configs_task():
 
 @task
 @parallel
+def umount_all_swift(config_path):
+    nodes, cfg = load_cfg(config_path)
+    hostname = run("hostname -s")
+    curr_cfg = cfg['storage_nodes'][hostname]
+
+    for line in run("mount").split("\n"):
+        dev, _, path = line.split()[:3]
+        if path.startswith(curr_cfg['root_dir'].strip()):
+            sudo('umount ' + dev)
+
+
+@task
+@parallel
 def deploy_storage(config_path):
     nodes, cfg = load_cfg(config_path)
     hostname = run("hostname -s")
@@ -281,8 +294,8 @@ def deploy_storage(config_path):
             continue
         sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
-        line = "{0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0\n".format(dev, mount_path)
-        append("/etc/fstab", line, use_sudo=True)
+        # line = "{0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0\n".format(dev, mount_path)
+        # append("/etc/fstab", line, use_sudo=True)
         sudo("mount " + mount_path)
         sudo("chown -R swift:swift " + mount_path)
 
@@ -318,7 +331,7 @@ def stop_proxy():
 
 storage_services = """
     openstack-swift-account.service
-    openstack-swift-account-auditor.service 
+    openstack-swift-account-auditor.service
     openstack-swift-account-reaper.service
     openstack-swift-account-replicator.service
     openstack-swift-container.service
@@ -377,29 +390,18 @@ if __name__ == "__main__":
         pass
     else:
         # execute(prepare, hosts=nodes.all_ip)
+        all_stors = [storage.ip for storage in nodes.storage]
+        all_proxy = [proxy.ip for proxy in nodes.proxy]
 
-        execute(stop_storage,
-                hosts=[storage.ip for storage in nodes.storage])
-        execute(stop_proxy,
-                hosts=[proxy.ip for proxy in nodes.proxy])
+        execute(stop_storage, hosts=all_stors)
+        execute(stop_proxy, hosts=all_proxy)
+        execute(umount_all_swift, conf_path, hosts=all_stors)
 
-        execute(deploy_proxy,
-                hosts=[proxy.ip for proxy in nodes.proxy])
+        execute(deploy_proxy, hosts=all_proxy)
+        execute(deploy_storage, conf_path, hosts=all_stors)
+        execute(setup_configs, hosts=all_stors)
 
-        execute(deploy_storage, conf_path,
-                hosts=[storage.ip for storage in nodes.storage])
-
-        # execute(stop_storage,
-        #         hosts=[storage.ip for storage in nodes.storage])
-
-        # execute(stop_proxy,
-        #         hosts=[storage.ip for storage in nodes.storage])
-
-        execute(setup_configs,
-                hosts=[storage.ip for storage in nodes.storage])
-
-        execute(setup_rings, conf_path,
-                hosts=[nodes.controler.ip])
+        execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
 
         finalize(nodes)
 

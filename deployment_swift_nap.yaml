@@ -3,25 +3,27 @@ storage_nodes:
     #     ip: 192.168.124.17
     #     rsync_ip: 192.168.124.17
     #     root_dir: /srv/node
-    #     devs: [sdaa, sdab, sdac, sdad, sdae, sdaf, sdag, sdah]
+    #     devs: [sdaa,, sdab,, sdac,, sdad,, sdae,, sdaf,, sdag,, sdah]
 
     ictk0103r720-8:
         ip: 192.168.124.18
         rsync_ip: 192.168.124.18
         root_dir: /srv/node
-        devs: [sdai, sdaj, sdak, sdal, sdam, sdan, sdao, sdap, sdaq]
+        devs: [sdd, sde, sdf, sdg, sdh, sdi, sdj, sdk, sdl, sdm, sdp, sdq, sds, sdt, sdu, sdv, sdw, sdx, sdy, sdz, sdr, sdb, sdc, sdn, sdo, sdac, sdad, sdae, sdaf, sdag]
+
+# sdah sdai sdaj sdak sdan sdao sdap sdaq sdar sdas sdat sdau sdav sdaw sdaz sdba sdbb sdbc sdbd sdbe sdbf sdbg sdbh sdbi sdaa sdab sdbj sdam sdax sday
 
     # ictk0103r720-9:
     #     ip: 192.168.124.19
     #     rsync_ip: 192.168.124.19
     #     root_dir: /srv/node
-    #     devs: [sdar, sdas, sdat, sdau, sdav, sdaw, sdax, sday, sdaz]
+    #     devs: [sdar, sdas, sdat, sdau,, sdav,, sdaw,, sdax,, sday,, sdaz]
 
     # ictk0103r720-10:
     #     ip: 192.168.124.10
     #     rsync_ip: 192.168.124.10
     #     root_dir: /srv/node
-    #     devs: [sdba, sdbb, sdbc, sdbd, sdbe, sdbf, sdbg, sdbh, sdbi]
+    #     devs: [sdba,, sdbb,, sdbc,, sdbd,, sdbe,, sdbf,, sdbg,, sdbh,, sdbi]
 
 proxy_nodes:
     # ictk0103r720-7: 192.168.124.17
