@@ -27,31 +27,22 @@ class Node(object):
 
 
 class Storage(Node):
-    def __init__(self, name, ip, rsync_ip, mount_root, devs, scsi_ids):
+    def __init__(self, name, ip, rsync_ip, mount_root, devs, by_id):
         Node.__init__(self, name, ip)
         self.name = name
         self.ip = ip
         self.rsync_ip = rsync_ip
 
-        assert devs is not None or scsi_ids is not None
-        assert devs is None or scsi_ids is None
-
-        if devs is None:
-            self.dev2dir = None
-        else:
+        if devs is not None:
             self.dev2dir = {}
             for pos, dev in enumerate(devs):
                 mpoint = os.path.join(mount_root, "dev" + str(pos))
                 self.dev2dir[dev] = mpoint
-
-        if scsi_ids is None:
-            self.scsi2dir = None
         else:
-            self.scsi2dir = {}
-            for pos, scsi_id in enumerate(scsi_ids):
-                str_id = scsi_id.replace("[", "").replace("]", "").replace(":", "_")
-                mpoint = os.path.join(mount_root, "dev" + str_id)
-                self.scsi2dir[scsi_id] = mpoint
+            assert by_id is not None
+            for pos, dev_id in enumerate(by_id):
+                mpoint = os.path.join(mount_root, "dev_" + str(dev_id))
+                self.dev2dir["/dev/disk/by-id/" + dev_id] = mpoint
 
 
 class Nodes(object):
@@ -71,19 +62,20 @@ def load_cfg(path):
         rsync_ip = node_config['rsync_ip'].strip()
 
         devs = None
-        scsi_ids = None
+        dev_ids = None
+
         if 'devs' in node_config:
             devs = ['/dev/' + dev for dev in node_config['devs']]
         else:
-            assert 'scsi_luns' in node_config
-            scsi_ids = [scsi_id.strip() for scsi_id in node_config['scsi_luns']]
+            assert 'by_id' in node_config
+            dev_ids = [dev_id.strip() for dev_id in node_config['by_id']]
 
         st = Storage(name=name,
                      ip=ip,
                      rsync_ip=rsync_ip,
                      mount_root=node_config['root_dir'],
                      devs=devs,
-                     scsi_ids=scsi_ids)
+                     by_id=dev_ids)
 
         nodes.storage.append(st)
         nodes.all_ip.add(ip)
@@ -355,32 +347,28 @@ def get_scsi_dev_mapping():
     return id2dev
 
 
-def update_fstab():
-    pass
-    # fstab_sio = StringIO()
-    # get(remote_path='/etc/fstab', local_path=fstab_sio)
-    # fstab = fstab_sio.getvalue()
-    # new_fstab = []
-    # for line in fstab.split("\n"):
-    #     pline = line.strip()
-    #     if pline != "" and not pline.startswith("#"):
-    #         mpoint = pline.split()[1]
-    #         if not mpoint.startswith(mount_root):
-    #             new_fstab.append(line)
-    #     else:
-    #         new_fstab.append(line)
+def update_fstab(mount_root, mpoints):
+    fstab_sio = StringIO()
+    get(remote_path='/etc/fstab', local_path=fstab_sio)
+    fstab = fstab_sio.getvalue()
 
-    # dev_uuid = run("blkid " + dev).split()[1].split('"')[2]
-    # line = "UUID={0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0".format(dev_uuid, mount_path)
-    # new_fstab.append(line)
+    new_fstab = []
+    for line in fstab.split("\n"):
+        pline = line.strip()
+        if pline != "" and not pline.startswith("#"):
+            mpoint = pline.split()[1]
+            if not mpoint.startswith(mount_root):
+                new_fstab.append(line)
+        else:
+            new_fstab.append(line)
 
-    # put(remote_path='/etc/fstab',
-    #     local_path=StringIO("\n".join(new_fstab)),
-    #     use_sudo=True)
+    lt = "{0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0"
+    for dev, mpoint in mpoints:
+        new_fstab.append(lt.format(dev, mpoint))
 
-    # for dev, mount_path in node.dev2dir.items():
-    #     sudo("mount " + mount_path)
-    #     sudo("chown -R swift:swift " + mount_path)
+    put(remote_path='/etc/fstab',
+        local_path=StringIO("\n".join(new_fstab) + "\n"),
+        use_sudo=True)
 
 
 @task
@@ -401,19 +389,14 @@ def deploy_storage(config_path):
     assert mount_root != ""
     sudo("rmdir {0}/*".format(mount_root), warn_only=True)
 
-    dev2mp = []
-
-    if node.dev2dir is not None:
-        dev2mp = node.dev2dir.items()
-    else:
-        id2dev = get_scsi_dev_mapping()
-        for scsi_id, mount_path in node.scsi2dir.items():
-            dev2mp.append((id2dev[scsi_id], mount_path))
-
-    for dev, mount_path in dev2mp:
+    for dev, mount_path in node.dev2dir.items():
         sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
-        sudo("mount -o noatime,nodiratime,nobarrier,logbufs=8 {0} {1}".format(dev, mount_path))
+
+    update_fstab(mount_root, node.dev2dir.items())
+
+    for dev, mount_path in node.dev2dir.items():
+        sudo("mount " + mount_path)
 
         assert mount_path != "" and mount_path != "/"
         sudo("rm -rf {0}/*".format(mount_path), warn_only=True)
