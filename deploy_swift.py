@@ -27,17 +27,31 @@ class Node(object):
 
 
 class Storage(Node):
-    def __init__(self, name, ip, rsync_ip, mount_root, devs):
+    def __init__(self, name, ip, rsync_ip, mount_root, devs, scsi_ids):
         Node.__init__(self, name, ip)
         self.name = name
         self.ip = ip
         self.rsync_ip = rsync_ip
 
-        self.dev2dir = {}
-        for dev in devs:
-            mpoint = os.path.join(mount_root, dev)
-            dev_file = os.path.join("/dev", dev)
-            self.dev2dir[dev_file] = mpoint
+        assert devs is not None or scsi_ids is not None
+        assert devs is None or scsi_ids is None
+
+        if devs is None:
+            self.dev2dir = None
+        else:
+            self.dev2dir = {}
+            for pos, dev in enumerate(devs):
+                mpoint = os.path.join(mount_root, "dev" + str(pos))
+                self.dev2dir[dev] = mpoint
+
+        if scsi_ids is None:
+            self.scsi2dir = None
+        else:
+            self.scsi2dir = {}
+            for pos, scsi_id in enumerate(scsi_ids):
+                str_id = scsi_id.replace("[", "").replace("]", "").replace(":", "_")
+                mpoint = os.path.join(mount_root, "dev" + str_id)
+                self.scsi2dir[scsi_id] = mpoint
 
 
 class Nodes(object):
@@ -48,14 +62,48 @@ class Nodes(object):
         self.all_ip = set()
 
 
-# parallel = lambda x: x
+def load_cfg(path):
+    cfg = yaml.load(open(path).read())
+    nodes = Nodes()
 
+    for name, node_config in cfg['storage_nodes'].items():
+        ip = node_config['ip'].strip()
+        rsync_ip = node_config['rsync_ip'].strip()
+
+        devs = None
+        scsi_ids = None
+        if 'devs' in node_config:
+            devs = ['/dev/' + dev for dev in node_config['devs']]
+        else:
+            assert 'scsi_luns' in node_config
+            scsi_ids = [scsi_id.strip() for scsi_id in node_config['scsi_luns']]
+
+        st = Storage(name=name,
+                     ip=ip,
+                     rsync_ip=rsync_ip,
+                     mount_root=node_config['root_dir'],
+                     devs=devs,
+                     scsi_ids=scsi_ids)
+
+        nodes.storage.append(st)
+        nodes.all_ip.add(ip)
+
+    for name, ip in cfg['proxy_nodes'].items():
+        nodes.proxy.append(Node(name, ip.strip()))
+        nodes.all_ip.add(ip.strip())
+    nodes.controler = nodes.proxy[0]
+
+    return nodes, cfg
+
+
+#  --------------------------------------- BASIC PREPARE ----------------------------------------------
 
 @task
 @parallel
 def prepare():
     if 'rh' == get_distro():
         sudo("systemctl stop firewalld.service", warn_only=True)
+        sudo("systemctl disable firewalld.service", warn_only=True)
         with hide('stdout', 'stderr'):
             sudo("yum -y install epel-release")
             sudo("yum -y install http://rdo.fedorapeople.org/openstack-kilo/rdo-release-kilo.rpm")
@@ -77,27 +125,17 @@ user = swift
 swift_dir = /etc/swift"""
 
 
-def load_cfg(path):
-    cfg = yaml.load(open(path).read())
-    nodes = Nodes()
+@task
+@parallel
+def umount_all_swift(config_path):
+    nodes, cfg = load_cfg(config_path)
+    hostname = run("hostname -s")
+    mount_root = cfg['storage_nodes'][hostname]['root_dir'].strip()
 
-    for name, node_config in cfg['storage_nodes'].items():
-        ip = node_config['ip'].strip()
-        rsync_ip = node_config['rsync_ip'].strip()
-
-        nodes.storage.append(
-            Storage(name, ip, rsync_ip,
-                    node_config['root_dir'],
-                    node_config['devs']))
-
-        nodes.all_ip.add(ip)
-
-    for name, ip in cfg['proxy_nodes'].items():
-        nodes.proxy.append(Node(name, ip.strip()))
-        nodes.all_ip.add(ip.strip())
-    nodes.controler = nodes.proxy[0]
-
-    return nodes, cfg
+    for line in run("mount").split("\n"):
+        dev, _, path = line.split()[:3]
+        if path.startswith(mount_root):
+            sudo('umount ' + dev)
 
 
 def get_ips(runner=run):
@@ -105,28 +143,70 @@ def get_ips(runner=run):
                   " awk '{gsub(/\/.*/,\"\",$4); print $4}'")
 
 
+# ------------------------- MEMCACHE --------------------------------------------------
+
 @task
 @parallel
-def deploy_proxy():
-    # openstack user create --password-prompt swift
-    # openstack role add --project service --user swift admin
-    # openstack service create --name swift --description "OpenStack Object Storage" object-store
+def deploy_memcache():
+    sudo("yum -y install memcached")
 
-    # openstack endpoint create --publicurl 'http://controller:8080/v1/AUTH_%(tenant_id)s'
-    #           --internalurl 'http://controller:8080/v1/AUTH_%(tenant_id)s'
-    #           --adminurl http://controller:8080 --region RegionOne object-store
-    # sudo("yum -y install python-keystone-auth-token python-keystonemiddleware")
 
-    sudo("yum -y install openstack-swift-proxy python-swiftclient memcached")
+@task
+@parallel
+def start_memcache():
+    sudo("systemctl enable memcached.service")
+    sudo("systemctl start memcached.service")
+
+
+@task
+@parallel
+def stop_memcache():
+    sudo("systemctl stop memcached.service")
+    sudo("systemctl disable memcached.service")
+
+
+# ------------------------- PROXY --------------------------------------------------
+
+@task
+@parallel
+def deploy_proxy(memcache_ip):
+    sudo("yum -y install openstack-swift-proxy python-swiftclient")
+
     url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/proxy-server.conf-sample?h=stable/kilo"
     prox = urllib2.urlopen(url).read()
+
     prox = prox.replace("# bind_ip = 0.0.0.0", prox_cfg)
-    prox = prox.replace("# account_autocreate = false", "account_autocreate = true")
-    prox = prox.replace("# operator_roles = admin, swiftoperator", "operator_roles = admin, swiftoperator")
-    prox = prox.replace("# memcache_servers = 127.0.0.1:11211", "memcache_servers = 127.0.0.1:11211")
+    prox = prox.replace("# account_autocreate = false",
+                        "account_autocreate = true")
+
+    prox = prox.replace("# operator_roles = admin, swiftoperator",
+                        "operator_roles = admin, swiftoperator")
+
+    prox = prox.replace("# memcache_servers = 127.0.0.1:11211",
+                        "memcache_servers = {0}:11211".format(memcache_ip))
+
+    prox = prox.replace("# log_level = INFO", "log_level = ERROR")
+
     put(remote_path='/etc/swift/proxy-server.conf',
         local_path=StringIO(prox),
         use_sudo=True)
+
+
+@task
+@parallel
+def start_proxy(swift_cfg):
+    sudo("systemctl enable openstack-swift-proxy.service")
+    sudo("systemctl start openstack-swift-proxy.service")
+
+
+@task
+@parallel
+def stop_proxy():
+    sudo("systemctl stop openstack-swift-proxy.service", warn_only=True)
+    sudo("systemctl disable openstack-swift-proxy.service", warn_only=True)
+
+
+# ------------------------- RINGS --------------------------------------------------
 
 
 @task
@@ -144,8 +224,8 @@ def setup_rings(config_path):
 
     def forall_devs(cmd_templ):
         for node in nodes.storage:
-            for dev, mount in node.dev2dir.items():
-                dev_fname = dev.strip().split('/')[-1]
+            for mount in node.dev2dir.values():
+                dev_fname = os.path.basename(mount.strip())
                 sudo(cmd_templ.format(ip=node.ip, dev=dev_fname), user='swift')
 
     sudo("chown -R swift:swift /etc/swift")
@@ -172,8 +252,7 @@ def setup_rings(config_path):
             dt = {}
             for fname in files:
                 dt[fname] = StringIO()
-                get(remote_path='account.ring.gz',
-                    local_path=dt[fname])
+                get(remote_path=fname, local_path=dt[fname])
 
             execute(store_rings, dt, hosts=all_ips)
 
@@ -227,21 +306,24 @@ def setup_configs():
     acc = urllib2.urlopen(url).read()
     acc = acc.replace("# bind_ip = 0.0.0.0", acc_cfg)
     acc = acc.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
+    acc = acc.replace("# log_level = INFO", "log_level = ERROR")
     put(remote_path='/etc/swift/account-server.conf',
         local_path=StringIO(acc),
         use_sudo=True)
 
     url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/container-server.conf-sample?h=stable/kilo"
-    acc = urllib2.urlopen(url).read()
-    acc = acc.replace("# bind_ip = 0.0.0.0", cont_cfg)
-    acc = acc.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
+    cont = urllib2.urlopen(url).read()
+    cont = cont.replace("# bind_ip = 0.0.0.0", cont_cfg)
+    cont = cont.replace("# recon_cache_path = /var/cache/swift", "recon_cache_path = /var/cache/swift")
+    cont = cont.replace("# log_level = INFO", "log_level = ERROR")
     put(remote_path='/etc/swift/container-server.conf',
-        local_path=StringIO(acc),
+        local_path=StringIO(cont),
         use_sudo=True)
 
     url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/object-server.conf-sample?h=stable/kilo"
     obj_c = urllib2.urlopen(url).read()
     obj_c = obj_c.replace("# bind_ip = 0.0.0.0", obj_cfg)
+    obj_c = obj_c.replace("# log_level = INFO", "log_level = ERROR")
     put(remote_path='/etc/swift/object-server.conf',
         local_path=StringIO(obj_c),
         use_sudo=True)
@@ -259,17 +341,46 @@ def setup_configs_task():
     setup_configs()
 
 
+# ---------------------------------  STORAGE --------------------------------------------------------------
+
 @task
 @parallel
-def umount_all_swift(config_path):
-    nodes, cfg = load_cfg(config_path)
-    hostname = run("hostname -s")
-    curr_cfg = cfg['storage_nodes'][hostname]
+def get_scsi_dev_mapping():
+    id2dev = {}
+    with hide('stdout', 'stderr'):
+        for line in run("lsscsi").split("\n"):
+            vals = line.split()
+            if len(vals) == 6:
+                id2dev[vals[0]] = vals[5]
+    return id2dev
 
-    for line in run("mount").split("\n"):
-        dev, _, path = line.split()[:3]
-        if path.startswith(curr_cfg['root_dir'].strip()):
-            sudo('umount ' + dev)
+
+def update_fstab():
+    pass
+    # fstab_sio = StringIO()
+    # get(remote_path='/etc/fstab', local_path=fstab_sio)
+    # fstab = fstab_sio.getvalue()
+    # new_fstab = []
+    # for line in fstab.split("\n"):
+    #     pline = line.strip()
+    #     if pline != "" and not pline.startswith("#"):
+    #         mpoint = pline.split()[1]
+    #         if not mpoint.startswith(mount_root):
+    #             new_fstab.append(line)
+    #     else:
+    #         new_fstab.append(line)
+
+    # dev_uuid = run("blkid " + dev).split()[1].split('"')[2]
+    # line = "UUID={0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0".format(dev_uuid, mount_path)
+    # new_fstab.append(line)
+
+    # put(remote_path='/etc/fstab',
+    #     local_path=StringIO("\n".join(new_fstab)),
+    #     use_sudo=True)
+
+    # for dev, mount_path in node.dev2dir.items():
+    #     sudo("mount " + mount_path)
+    #     sudo("chown -R swift:swift " + mount_path)
 
 
 @task
@@ -277,7 +388,6 @@ def umount_all_swift(config_path):
 def deploy_storage(config_path):
     nodes, cfg = load_cfg(config_path)
     hostname = run("hostname -s")
-
     for node in nodes.storage:
         if node.name == hostname:
             break
@@ -287,16 +397,27 @@ def deploy_storage(config_path):
     sudo("yum -y install xfsprogs rsync openstack-swift-account" +
          " openstack-swift-container openstack-swift-object")
 
-    devs = [line.split()[0] for line in run("mount").split("\n")]
+    mount_root = cfg['storage_nodes'][hostname]['root_dir'].strip()
+    assert mount_root != ""
+    sudo("rmdir {0}/*".format(mount_root), warn_only=True)
 
-    for dev, mount_path in node.dev2dir.items():
-        if dev in devs:
-            continue
+    dev2mp = []
+
+    if node.dev2dir is not None:
+        dev2mp = node.dev2dir.items()
+    else:
+        id2dev = get_scsi_dev_mapping()
+        for scsi_id, mount_path in node.scsi2dir.items():
+            dev2mp.append((id2dev[scsi_id], mount_path))
+
+    for dev, mount_path in dev2mp:
         sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
-        # line = "{0} {1} xfs noatime,nodiratime,nobarrier,logbufs=8 0 0\n".format(dev, mount_path)
-        # append("/etc/fstab", line, use_sudo=True)
-        sudo("mount " + mount_path)
+        sudo("mount -o noatime,nodiratime,nobarrier,logbufs=8 {0} {1}".format(dev, mount_path))
+
+        assert mount_path != "" and mount_path != "/"
+        sudo("rm -rf {0}/*".format(mount_path), warn_only=True)
+
         sudo("chown -R swift:swift " + mount_path)
 
     rsync_conf = rsync_conf_templ.format(rsync_ip=node.rsync_ip)
@@ -309,24 +430,7 @@ def deploy_storage(config_path):
 
     setup_configs()
     sudo("mkdir -p /var/cache/swift")
-
-
-@task
-@parallel
-def start_proxy(swift_cfg):
-    put(remote_path='/etc/swift/swift.conf',
-        local_path=StringIO(swift_cfg),
-        use_sudo=True)
     sudo("chown -R swift:swift /etc/swift /var/cache/swift")
-
-    sudo("systemctl enable openstack-swift-proxy.service memcached.service")
-    sudo("systemctl start openstack-swift-proxy.service memcached.service")
-
-
-@task
-@parallel
-def stop_proxy():
-    sudo("systemctl stop openstack-swift-proxy.service memcached.service", warn_only=True)
 
 
 storage_services = """
@@ -362,9 +466,10 @@ def start_storage(swift_cfg):
 @parallel
 def stop_storage():
     sudo("systemctl stop " + storage_services, warn_only=True)
+    sudo("systemctl disable " + storage_services, warn_only=True)
 
 
-def finalize(nodes):
+def get_swift_cfg(all_stors, all_proxy, all_mcache):
     url = "https://git.openstack.org/cgit/openstack/swift/plain/etc/swift.conf-sample?h=stable/kilo"
     swift_cfg = urllib2.urlopen(url).read()
 
@@ -373,16 +478,26 @@ def finalize(nodes):
                                   "swift_hash_path_suffix = " + suff)
 
     suff = hashlib.md5(str(uuid.uuid1())).hexdigest()
-    swift_cfg = swift_cfg.replace("swift_hash_path_prefix = changeme",
-                                  "swift_hash_path_prefix = " + suff)
+    return swift_cfg.replace("swift_hash_path_prefix = changeme",
+                             "swift_hash_path_prefix = " + suff)
 
-    execute(start_proxy, swift_cfg, hosts=[proxy.ip for proxy in nodes.proxy])
-    execute(start_storage, swift_cfg, hosts=[storage.ip for storage in nodes.storage])
+
+def save_swift_cfg(cfg):
+    put(remote_path='/etc/swift/swift.conf',
+        local_path=StringIO(swift_cfg),
+        use_sudo=True)
 
 
 if __name__ == "__main__":
     cmd, conf_path = sys.argv[1:]
     nodes, cfg = load_cfg(conf_path)
+
+    all_stors = [storage.ip for storage in nodes.storage]
+    all_proxy = [proxy.ip for proxy in nodes.proxy]
+    all_mcache = [cfg['memcache_node'].strip()]
+
+    all_swift = set(all_proxy)
+    all_swift.update(all_stors)
 
     env.user = 'root'
 
@@ -390,19 +505,26 @@ if __name__ == "__main__":
         pass
     else:
         # execute(prepare, hosts=nodes.all_ip)
-        all_stors = [storage.ip for storage in nodes.storage]
-        all_proxy = [proxy.ip for proxy in nodes.proxy]
 
         execute(stop_storage, hosts=all_stors)
         execute(stop_proxy, hosts=all_proxy)
+        execute(stop_memcache, hosts=all_mcache)
+
         execute(umount_all_swift, conf_path, hosts=all_stors)
 
-        execute(deploy_proxy, hosts=all_proxy)
+        execute(deploy_memcache, hosts=all_mcache)
+        execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
         execute(deploy_storage, conf_path, hosts=all_stors)
+
         execute(setup_configs, hosts=all_stors)
+
+        swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
+        execute(save_swift_cfg, swift_cfg, hosts=all_swift)
 
         execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
 
-        finalize(nodes)
+        execute(start_memcache, hosts=all_mcache)
+        execute(start_proxy, swift_cfg, hosts=all_proxy)
+        execute(start_storage, swift_cfg, hosts=all_stors)
 
     disconnect_all()
