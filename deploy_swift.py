@@ -33,15 +33,15 @@ class Storage(Node):
         self.ip = ip
         self.rsync_ip = rsync_ip
 
+        self.dev2dir = {}
         if devs is not None:
-            self.dev2dir = {}
             for pos, dev in enumerate(devs):
                 mpoint = os.path.join(mount_root, "dev" + str(pos))
                 self.dev2dir[dev] = mpoint
         else:
             assert by_id is not None
             for pos, dev_id in enumerate(by_id):
-                mpoint = os.path.join(mount_root, "dev_" + str(dev_id))
+                mpoint = os.path.join(mount_root, "dev-" + str(dev_id))
                 self.dev2dir["/dev/disk/by-id/" + dev_id] = mpoint
 
 
@@ -186,7 +186,7 @@ def deploy_proxy(memcache_ip):
 
 @task
 @parallel
-def start_proxy(swift_cfg):
+def start_proxy():
     sudo("systemctl enable openstack-swift-proxy.service")
     sudo("systemctl start openstack-swift-proxy.service")
 
@@ -228,7 +228,7 @@ def setup_rings(config_path):
         run("rm -f " + " ".join(files))
         ring_port = [('account.builder', 6002),
                      ('container.builder', 6001),
-                     ('object.builder', 6000)]
+                     ('object.builder', 6003)]
 
         for ring, port in ring_port:
             # Account ring
@@ -316,6 +316,7 @@ def setup_configs():
     obj_c = urllib2.urlopen(url).read()
     obj_c = obj_c.replace("# bind_ip = 0.0.0.0", obj_cfg)
     obj_c = obj_c.replace("# log_level = INFO", "log_level = ERROR")
+    obj_c = obj_c.replace("bind_port = 6000", "bind_port = 6003")
     put(remote_path='/etc/swift/object-server.conf',
         local_path=StringIO(obj_c),
         use_sudo=True)
@@ -390,7 +391,7 @@ def deploy_storage(config_path):
     sudo("rmdir {0}/*".format(mount_root), warn_only=True)
 
     for dev, mount_path in node.dev2dir.items():
-        sudo("mkfs.xfs -f " + dev)
+        # sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
 
     update_fstab(mount_root, node.dev2dir.items())
@@ -413,6 +414,7 @@ def deploy_storage(config_path):
 
     setup_configs()
     sudo("mkdir -p /var/cache/swift")
+    sudo("rm -rf /var/cache/swift/*")
     sudo("chown -R swift:swift /etc/swift /var/cache/swift")
 
 
@@ -435,10 +437,7 @@ storage_services = " ".join(storage_services.split())
 
 @task
 @parallel
-def start_storage(swift_cfg):
-    put(remote_path='/etc/swift/swift.conf',
-        local_path=StringIO(swift_cfg),
-        use_sudo=True)
+def start_storage():
     sudo("chown -R swift:swift /etc/swift /var/cache/swift")
 
     sudo("systemctl enable " + storage_services)
@@ -467,8 +466,47 @@ def get_swift_cfg(all_stors, all_proxy, all_mcache):
 
 def save_swift_cfg(cfg):
     put(remote_path='/etc/swift/swift.conf',
-        local_path=StringIO(swift_cfg),
+        local_path=StringIO(cfg),
         use_sudo=True)
+
+
+swift_rc_templ = """
+export ST_AUTH="http://{0}:8080/auth/v1.0/"
+export ST_USER="admin:admin"
+export ST_KEY="admin"
+export SW_NODES="{1}"
+export SW_TOKEN=`curl -v -H  "X-Auth-User:$ST_USER" -H  "X-Auth-Key:$ST_KEY" "$ST_AUTH" 2>&1 | grep X-Auth-Token | awk '{{print $3}}'`
+"""
+
+
+@task
+@parallel
+def deploy_testnode(all_proxy):
+    # if 'rh' == get_distro():
+    #     sudo("systemctl stop firewalld.service", warn_only=True)
+    #     sudo("systemctl disable firewalld.service", warn_only=True)
+    #     with hide('stdout', 'stderr'):
+    #         sudo("yum -y install epel-release")
+    #         sudo("yum -y install http://rdo.fedorapeople.org/openstack-kilo/rdo-release-kilo.rpm")
+    #         sudo("yum -y upgrade")
+    #         sudo("yum -y install ntp")
+
+    # sudo("groupadd swift")
+    # sudo("useradd swift -g swift -M -n")
+
+    # sudo("service ntpd stop", warn_only=True)
+    # sudo("ntpdate pool.ntp.org", warn_only=True)
+    # sudo("service ntpd start", warn_only=True)
+
+    # sudo("rm /etc/localtime")
+    # sudo("cp /usr/share/zoneinfo/Europe/Kiev /etc/localtime")
+    # sudo("yum -y install python-swiftclient git ")
+    # run("git clone https://github.com/markseger/getput.git")
+
+    swift_rc = swift_rc_templ.format(all_proxy[0],
+    							     ",".join(ip for ip in all_proxy))
+    put(remote_path='swiftrc',
+        local_path=StringIO(swift_rc))
 
 
 if __name__ == "__main__":
@@ -478,6 +516,7 @@ if __name__ == "__main__":
     all_stors = [storage.ip for storage in nodes.storage]
     all_proxy = [proxy.ip for proxy in nodes.proxy]
     all_mcache = [cfg['memcache_node'].strip()]
+    testnodes = [ip.strip() for ip in cfg['testnodes']]
 
     all_swift = set(all_proxy)
     all_swift.update(all_stors)
@@ -489,25 +528,27 @@ if __name__ == "__main__":
     else:
         # execute(prepare, hosts=nodes.all_ip)
 
-        execute(stop_storage, hosts=all_stors)
-        execute(stop_proxy, hosts=all_proxy)
-        execute(stop_memcache, hosts=all_mcache)
+        # execute(stop_storage, hosts=all_stors)
+        # execute(stop_proxy, hosts=all_proxy)
+        # execute(stop_memcache, hosts=all_mcache)
 
-        execute(umount_all_swift, conf_path, hosts=all_stors)
+        # execute(umount_all_swift, conf_path, hosts=all_stors)
 
-        execute(deploy_memcache, hosts=all_mcache)
-        execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
-        execute(deploy_storage, conf_path, hosts=all_stors)
+        # execute(deploy_memcache, hosts=all_mcache)
+        # execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
+        # execute(deploy_storage, conf_path, hosts=all_stors)
 
-        execute(setup_configs, hosts=all_stors)
+        # execute(setup_configs, hosts=all_stors)
 
-        swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
-        execute(save_swift_cfg, swift_cfg, hosts=all_swift)
+        # swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
+        # execute(save_swift_cfg, swift_cfg, hosts=all_swift)
 
-        execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
+        # execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
 
-        execute(start_memcache, hosts=all_mcache)
-        execute(start_proxy, swift_cfg, hosts=all_proxy)
-        execute(start_storage, swift_cfg, hosts=all_stors)
+        # execute(start_memcache, hosts=all_mcache)
+        # execute(start_proxy, swift_cfg, hosts=all_proxy)
+        # execute(start_storage, swift_cfg, hosts=all_stors)
+
+        execute(deploy_testnode, all_proxy, hosts=testnodes)
 
     disconnect_all()
