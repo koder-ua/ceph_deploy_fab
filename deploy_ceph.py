@@ -392,8 +392,6 @@ def add_new_osd(conf_path):
     else:
         j_devs = [None] * len(storage_devs)
 
-    print storage_devs, j_devs
-
     for stor, _ in zip(storage_devs, j_devs):
         params.osd_uuid = str(uuid.uuid4())
 

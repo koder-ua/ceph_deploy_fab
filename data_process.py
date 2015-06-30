@@ -1,194 +1,178 @@
-import re
 import sys
+import json
 import texttable
 import collections
 
-# Rank Test  Clts Proc  OSize  Start     End        MB/Sec   Ops   Ops/Sec Errs Latency  Median    LatRange   %CPU  Comp
+import matplotlib.pyplot as plt
 
-rr_fl = r"\d+\.?\d*"
-rr_dict = [("rank", r"\d+", int),
-           ("test", r"\w+", str),
-           ("clts", r"\d+", int),
-           ("proc", r"\d+", int),
-           ("size", r"\d+[kmg]", str),
-           ("start", r"\d\d:\d\d:\d\d", str),
-           ("end", r"\d\d:\d\d:\d\d", str),
-           ("bw", rr_fl, float),
-           ("io", r"\d+", int),
-           ("iops", rr_fl, float),
-           ("ppspsec", rr_fl, float),
-           ("errs", r"\d+", int),
-           ("lat", rr_fl, float),
-           ("median", rr_fl, float),
-           ("lat_range", rr_fl + '-' + rr_fl, lambda x: (float(x.split('-')[0]), float(x.split('-')[1]))),
-           ("cpu", rr_fl, float),
-           ('comp', r'\w+', str)]
-
-rr_str = ""
-types = {}
-for name, rr, tp in rr_dict:
-    rr_str += r"\s*(?P<{0}>{1})\s*".format(name, rr)
-    types[name] = tp
-
-rr = re.compile(rr_str + "$")
-res = collections.defaultdict(lambda: [])
-
-val_keys = ("bw", "iops", "lat", "median", "lat_range", "cpu", "errs")
-key_keys = ("test", "size", "proc")
-
-for line in open(sys.argv[1]):
-    r = rr.match(line)
-    if r is not None:
-        key = tuple(types[kname](r.group(kname)) for kname in key_keys)
-        vls_it = (types[kname](r.group(kname)) for kname in val_keys)
-        val = dict(zip(val_keys, vls_it))
-        res[key].append(val)
+from statistic import data_property
 
 
-def report(res):
-    keys = res.keys()
-    keys.sort(key=lambda x: (x[0], x[2], x[1]))
+class TestResults(object):
+    def __init__(self, data):
+        self.times = []
+        self.iops = []
 
+
+def load_file(fname):
+    ips = []
+    res = collections.defaultdict(lambda: [])
+    skipped = 0
+    for line in open(fname):
+        if line.startswith('{'):
+            data = json.loads(line)
+            times = [ttime for ttime, _ in data.values()]
+
+            ips.extend(data.keys())
+            if min(times) * 1.3 < max(times):
+                for _, node_res in data.values():
+                    for (key, data) in node_res:
+                        skipped += len(data)
+                continue
+
+            for _, node_res in data.values():
+                for (key, data) in node_res:
+                    res[tuple(key)].extend(data)
+
+    print "Res size =", sum(len(v) for v in res.values()), "Skipped =", skipped
+    return res, len(set(ips))
+
+
+SMAP = dict(k=1024, m=1024 ** 2, g=1024 ** 3, t=1024 ** 4)
+
+
+def ssize2b(ssize):
+    try:
+        if isinstance(ssize, (int, long)):
+            return ssize
+
+        ssize = ssize.lower()
+        if ssize[-1] in SMAP:
+            return int(ssize[:-1]) * SMAP[ssize[-1]]
+        return int(ssize)
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("Unknow size format {0!r}".format(ssize))
+
+
+def report(processed_data, keys, node_count):
     tab = texttable.Texttable(max_width=200)
     tab.set_deco(tab.HEADER | tab.VLINES | tab.BORDER)
     tab.set_cols_align(["l", "l", "r", "r", "r", "r"])
 
-    avg = lambda x: sum(map(float, x)) / len(x)
+    pkey = None
+
+    header = ["test", "size", "nthreads", "iops ~ conf", "lat ms ~ conf", "err"]
+    tab.header(header)
+    sep = ['-' * len(i) for i in header]
 
     for key in keys:
+        if pkey is not None and pkey[:2] != key[:2]:
+            tab.add_row(sep)
+
+        pkey = key
         test, size, proc = key
+
+        iops = processed_data[key]["iops"]
+        lat = processed_data[key]["lat"]
+        errs = processed_data[key]["errs"]
+
         row = [
-            test, size, proc,
-            "{0:.1f}".format(round(avg([i["iops"] for i in res[key]]), 1)),
-            int(avg([i["lat"] for i in res[key]]) * 1000),
-            int(avg([i["lat"] for i in res[key]]))
+            test, size, proc * node_count,
+            "{0} ~ {1:>4}".format(int(iops.average), int(iops.confidence)),
+            "{0} ~ {1:>4}".format(int(lat.average), int(lat.confidence)),
+            "{0}".format(int(errs.average)),
         ]
         tab.add_row(row)
 
-    tab.header(["test", "size", "nthreads", "iops", "lat", "err"])
-
     return tab.draw()
 
-print report(res)
 
-# def plot(iops, lats):
-#     labels_and_data_mp = collections.defaultdict(lambda: [])
-#     vls = {}
+def process_data(res, node_count):
+    keys = res.keys()
+    keys.sort(key=lambda x: (x[0], ssize2b(x[1]), x[2]))
+    nres = {}
 
-#     # plot io_time = func(bsize)
-#     for res in processed_results.values():
-#         if res.name.startswith('linearity_test'):
-#             iotimes = [1000. / val for val in res.iops.raw]
+    for key in keys:
+        nres[key] = dict(
+            iops=data_property([i["iops"] * node_count for i in res[key]]),
+            lat=data_property([i["lat"] * 1000 for i in res[key]]),
+            errs=data_property([i["errs"] for i in res[key]])
+        )
 
-#             op_summ = get_test_summary(res.params)[:3]
+    return nres, keys
 
-#             labels_and_data_mp[op_summ].append(
-#                 [res.p.blocksize, res.iops.raw, iotimes])
 
-#             cvls = res.params.vals.copy()
-#             del cvls['blocksize']
-#             del cvls['rw']
+def io_chart(title, legend, marks, iops, iops_err, latv_50, latv_95):
+    width = 0.35
+    lc = len(marks)
+    xt = range(1, lc + 1)
 
-#             cvls.pop('sync', None)
-#             cvls.pop('direct', None)
-#             cvls.pop('buffered', None)
+    fig, p1 = plt.subplots()
+    xpos = [i - width / 2 for i in xt]
 
-#             if op_summ not in vls:
-#                 vls[op_summ] = cvls
-#             else:
-#                 assert cvls == vls[op_summ]
+    p1.bar(xpos, iops,
+           width=width,
+           yerr=iops_err,
+           ecolor='m',
+           color='y',
+           label=legend)
 
-#     all_labels = None
-#     _, ax1 = plt.subplots()
-#     for name, labels_and_data in labels_and_data_mp.items():
-#         labels_and_data.sort(key=lambda x: ssize2b(x[0]))
+    p1.grid(True)
+    handles1, labels1 = p1.get_legend_handles_labels()
 
-#         labels, _, iotimes = zip(*labels_and_data)
+    p2 = p1.twinx()
+    p2.plot(xt, latv_50, label="lat med")
 
-#         if all_labels is None:
-#             all_labels = labels
-#         else:
-#             assert all_labels == labels
+    if latv_95 is not None:
+        p2.plot(xt, latv_95, label="lat 95%")
 
-#         plt.boxplot(iotimes)
-#         if len(labels_and_data) > 2 and \
-#            ssize2b(labels_and_data[-2][0]) >= 4096:
+    plt.xlim(0.5, lc + 0.5)
+    plt.xticks(xt, map(str, marks))
+    p1.set_xlabel("Thread cumulative")
+    p1.set_ylabel(legend)
+    p2.set_ylabel("Latency ms")
+    plt.title(title)
+    handles2, labels2 = p2.get_legend_handles_labels()
 
-#             xt = range(1, len(labels) + 1)
+    plt.legend(handles1 + handles2, labels1 + labels2,
+               loc='center left', bbox_to_anchor=(1.1, 0.81))
 
-#             def io_time(sz, bw, initial_lat):
-#                 return sz / bw + initial_lat
+    plt.subplots_adjust(right=0.68)
+    plt.show()
 
-#             x = numpy.array(map(ssize2b, labels))
-#             y = numpy.array([sum(dt) / len(dt) for dt in iotimes])
-#             popt, _ = scipy.optimize.curve_fit(io_time, x, y, p0=(100., 1.))
 
-#             y1 = io_time(x, *popt)
-#             plt.plot(xt, y1, linestyle='--',
-#                      label=name + ' LS linear approx')
+def plot_data_over_time(raw_res, node_count):
+    keys = raw_res.keys()
+    assert len(keys) == 1
 
-#             for idx, (sz, _, _) in enumerate(labels_and_data):
-#                 if ssize2b(sz) >= 4096:
-#                     break
+    iops = [data['iops'] for data in raw_res[keys[0]]]
+    iops = map(sum, zip(iops[::3], iops[1::3], iops[2::3]))
+    plt.plot(iops)
+    plt.show()
 
-#             bw = (x[-1] - x[idx]) / (y[-1] - y[idx])
-#             lat = y[-1] - x[-1] / bw
-#             y2 = io_time(x, bw, lat)
-#             plt.plot(xt, y2, linestyle='--',
-#                      label=abbv_name_to_full(name) +
-#                      ' (4k & max) linear approx')
 
-#     plt.setp(ax1, xticklabels=labels)
+if __name__ == "__main__":
+    raw_res, node_count = load_file(sys.argv[1])
+    plot_data_over_time(raw_res, node_count)
+    exit(1)
+    res, keys = process_data(raw_res, node_count)
 
-#     plt.xlabel("Block size")
-#     plt.ylabel("IO time, ms")
+    iops = []
+    iops_err = []
+    lat = []
+    marks = []
 
-#     plt.subplots_adjust(top=0.85)
-#     plt.legend(bbox_to_anchor=(0.5, 1.15),
-#                loc='upper center',
-#                prop={'size': 10}, ncol=2)
-#     plt.grid()
-#     iotime_plot = get_emb_data_svg(plt)
-#     plt.clf()
+    ttype = 'get'
+    ssize = '64k'
 
-#     # plot IOPS = func(bsize)
-#     _, ax1 = plt.subplots()
+    for key in keys:
+        test, size, th = key
+        if test == ttype and size == ssize:
+            io = res[key]['iops']
+            iops.append(io.average)
+            iops_err.append(io.confidence)
+            lat.append(res[key]['lat'].average)
+            marks.append(th * node_count)
 
-#     for name, labels_and_data in labels_and_data_mp.items():
-#         labels_and_data.sort(key=lambda x: ssize2b(x[0]))
-#         _, data, _ = zip(*labels_and_data)
-#         plt.boxplot(data)
-#         avg = [float(sum(arr)) / len(arr) for arr in data]
-#         xt = range(1, len(data) + 1)
-#         plt.plot(xt, avg, linestyle='--',
-#                  label=abbv_name_to_full(name) + " avg")
-
-#     plt.setp(ax1, xticklabels=labels)
-#     plt.xlabel("Block size")
-#     plt.ylabel("IOPS")
-#     plt.legend(bbox_to_anchor=(0.5, 1.15),
-#                loc='upper center',
-#                prop={'size': 10}, ncol=2)
-#     plt.grid()
-#     plt.subplots_adjust(top=0.85)
-
-#     iops_plot = get_emb_data_svg(plt)
-
-#     res = set(get_test_lcheck_params(res) for res in processed_results.values())
-#     ncount = list(set(res.testnodes_count for res in processed_results.values()))
-#     conc = list(set(res.concurence for res in processed_results.values()))
-
-#     assert len(conc) == 1
-#     assert len(ncount) == 1
-
-#     descr = {
-#         'vm_count': ncount[0],
-#         'concurence': conc[0],
-#         'oper_descr': ", ".join(res).capitalize()
-#     }
-
-#     params_map = {'iotime_vs_size': iotime_plot,
-#                   'iops_vs_size': iops_plot,
-#                   'descr': descr}
-
-#     return get_template('report_linearity.html').format(**params_map)
+    io_chart("{0} {1}".format(ttype, ssize),
+             "iops", marks, iops, iops_err, lat, None)

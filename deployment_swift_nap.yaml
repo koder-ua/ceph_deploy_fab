@@ -1,148 +1,33 @@
 storage_nodes:
+    xfs_opts: "-d su=131072,sw=8 -i size=1024"
     ictk0103r720-7:
         ip: 192.168.124.17
         rsync_ip: 192.168.124.17
         root_dir: /srv/node
-        by_id:
-           - "wwn-0x5000c50040f368c7"
-           - "wwn-0x5000c50040f3a7a7"
-           - "wwn-0x5000c50040f3adf7"
-           - "wwn-0x5000c50040f3aeff"
-           - "wwn-0x5000c50040f3b347"
-           - "wwn-0x5000c50040f3b627"
-           - "wwn-0x5000c50040f3d14b"
-           - "wwn-0x5000c50040f3e337"
-           - "wwn-0x5000c50040f3e6fb"
-           - "wwn-0x5000c50040f40d03"
-           - "wwn-0x5000c50040f419f3"
-           - "wwn-0x5000c50040f440f7"
-           - "wwn-0x5000c5004188fc17"
-           - "wwn-0x5000c500418a5fff"
-           - "wwn-0x5000c500418abdfb"
-           - "wwn-0x5000c500418abeab"
-           - "wwn-0x5000c500418b5807"
-           - "wwn-0x5000c5004191a59b"
-           - "wwn-0x5000c5004191add7"
-           - "wwn-0x5000c5004191ba03"
-           - "wwn-0x5000c5004191ffbf"
-           - "wwn-0x5000c50041921f6b"
-           - "wwn-0x5000c50041923897"
-           - "wwn-0x5000c500419264b7"
-           - "wwn-0x5000c50041927873"
-           - "wwn-0x5000c5004192d847"
-           - "wwn-0x5000c5004192ec1f"
-           - "wwn-0x5000c50055e24edb"
-           - "wwn-0x5000c50055e277e3"
-           - "wwn-0x5000c50055e28987"
+        globs:
+          - "/dev/mapper/36*"
 
     ictk0103r720-8:
         ip: 192.168.124.18
         rsync_ip: 192.168.124.18
         root_dir: /srv/node
-        by_id:
-           - "wwn-0x5000c50025e89553"
-           - "wwn-0x5000c500260b3c9f"
-           - "wwn-0x5000c500260c27c3"
-           - "wwn-0x5000c5003435d4af"
-           - "wwn-0x5000c500349145af"
-           - "wwn-0x5000c50040c1347f"
-           - "wwn-0x5000c50040e7b0a3"
-           - "wwn-0x5000c50040e81777"
-           - "wwn-0x5000c50040e8191b"
-           - "wwn-0x5000c50040e81993"
-           - "wwn-0x5000c50040e84297"
-           - "wwn-0x5000c50040e845ff"
-           - "wwn-0x5000c50040e848cf"
-           - "wwn-0x5000c50040e84f2f"
-           - "wwn-0x5000c50040e85cdb"
-           - "wwn-0x5000c50040e85e47"
-           - "wwn-0x5000c50040e85f1f"
-           - "wwn-0x5000c50040e868a7"
-           - "wwn-0x5000c50040e879fb"
-           - "wwn-0x5000c50040e8b313"
-           - "wwn-0x5000c50040e90197"
-           - "wwn-0x5000c50040e9564f"
-           - "wwn-0x5000c50040e97bd3"
-           - "wwn-0x5000c50040e97f4b"
-           - "wwn-0x5000c50040e985c7"
-           - "wwn-0x5000c50040e9945b"
-           - "wwn-0x5000c50040e9a31b"
-           - "wwn-0x5000c50040f0ac33"
-           - "wwn-0x5000c50040f0c903"
-           - "wwn-0x5000c50040f0cb57"
+        globs:
+          - "/dev/mapper/36*"
 
     ictk0103r720-9:
         ip: 192.168.124.19
         rsync_ip: 192.168.124.19
         root_dir: /srv/node
-        by_id:
-          - "wwn-0x5000c50041892b7f"
-          - "wwn-0x5000c50041895447"
-          - "wwn-0x5000c5004189653b"
-          - "wwn-0x5000c500418989af"
-          - "wwn-0x5000c500418989e3"
-          - "wwn-0x5000c50041898d03"
-          - "wwn-0x5000c5004189ab73"
-          - "wwn-0x5000c5004189f2fb"
-          - "wwn-0x5000c500418a1833"
-          - "wwn-0x5000c500418a2167"
-          - "wwn-0x5000c500418a274f"
-          - "wwn-0x5000c500418a849b"
-          - "wwn-0x5000c500418a9bef"
-          - "wwn-0x5000c500418ac897"
-          - "wwn-0x5000c500418aedab"
-          - "wwn-0x5000c500418b2f27"
-          - "wwn-0x5000c500418b60c7"
-          - "wwn-0x5000c500418b78eb"
-          - "wwn-0x5000c500418b7fef"
-          - "wwn-0x5000c500418b8653"
-          - "wwn-0x5000c500418b9a37"
-          - "wwn-0x5000c500418bb317"
-          - "wwn-0x5000c500418f080f"
-          - "wwn-0x5000c50041918a6b"
-          - "wwn-0x5000c5004192106b"
-          - "wwn-0x5000c50041921f3b"
-          - "wwn-0x5000c50041923feb"
-          - "wwn-0x5000c50041924e03"
-          - "wwn-0x5000c50055e2693b"
+        globs:
+          - "/dev/mapper/36*"
 
 
     ictk0103r720-10:
         ip: 192.168.124.10
         rsync_ip: 192.168.124.10
         root_dir: /srv/node
-        by_id:
-          - "wwn-0x5000c50025e88b47"
-          - "wwn-0x5000c50025e8a287"
-          - "wwn-0x5000c500260b3533"
-          - "wwn-0x5000c500260b4c2f"
-          - "wwn-0x5000c5003424db73"
-          - "wwn-0x5000c5003435f887"
-          - "wwn-0x5000c50034372893"
-          - "wwn-0x5000c500348ff1b3"
-          - "wwn-0x5000c50034916f7b"
-          - "wwn-0x5000c50034ff09a3"
-          - "wwn-0x5000c5003502c79b"
-          - "wwn-0x5000c5003505a0d7"
-          - "wwn-0x5000c5003505f9f7"
-          - "wwn-0x5000c50040e829c7"
-          - "wwn-0x5000c50040e8519f"
-#          - "wwn-0x5000c50040e8af9f"
-          - "wwn-0x5000c50040e95c4b"
-          - "wwn-0x5000c50040e96d37"
-          - "wwn-0x5000c50040e96def"
-          - "wwn-0x5000c50040e9719f"
-          - "wwn-0x5000c50040e98a4f"
-          - "wwn-0x5000c50040f0bbd7"
-          - "wwn-0x5000c50040f326f3"
-          - "wwn-0x5000c50040f3799f"
-          - "wwn-0x5000c50040f39c3f"
-          - "wwn-0x5000c50040f3be47"
-          - "wwn-0x5000c5004176c983"
-          - "wwn-0x5000c50041883ecb"
-          - "wwn-0x5000c50041888bf7"
-          - "wwn-0x5000c50041889793"
-          - "wwn-0x5000c5004188a94b"
+        globs:
+          - "/dev/mapper/36*"
 
 memcache_node: 192.168.124.18
 

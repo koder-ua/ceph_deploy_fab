@@ -1,5 +1,6 @@
 import sys
 import uuid
+import glob
 import hashlib
 import urllib2
 import os.path
@@ -27,22 +28,12 @@ class Node(object):
 
 
 class Storage(Node):
-    def __init__(self, name, ip, rsync_ip, mount_root, devs, by_id):
+    def __init__(self, name, ip, rsync_ip, mount_root, dev2dir):
         Node.__init__(self, name, ip)
         self.name = name
         self.ip = ip
         self.rsync_ip = rsync_ip
-
-        self.dev2dir = {}
-        if devs is not None:
-            for pos, dev in enumerate(devs):
-                mpoint = os.path.join(mount_root, "dev" + str(pos))
-                self.dev2dir[dev] = mpoint
-        else:
-            assert by_id is not None
-            for pos, dev_id in enumerate(by_id):
-                mpoint = os.path.join(mount_root, "dev-" + str(dev_id))
-                self.dev2dir["/dev/disk/by-id/" + dev_id] = mpoint
+        self.dev2dir = dev2dir
 
 
 class Nodes(object):
@@ -61,21 +52,32 @@ def load_cfg(path):
         ip = node_config['ip'].strip()
         rsync_ip = node_config['rsync_ip'].strip()
 
-        devs = None
-        dev_ids = None
+        dev2dir = {}
+        mount_root = node_config['root_dir']
 
         if 'devs' in node_config:
-            devs = ['/dev/' + dev for dev in node_config['devs']]
+            for pos, dev in enumerate(node_config['devs']):
+                mpoint = os.path.join(mount_root, "dev" + str(pos))
+                dev2dir[dev] = mpoint
+        elif 'by_id' in node_config:
+            for pos, dev_id in enumerate(node_config['by_id']):
+                dev_id = str(dev_id).strip()
+                mpoint = os.path.join(mount_root, "dev-" + dev_id)
+                dev2dir["/dev/disk/by-id/" + dev_id] = mpoint
+        elif 'globs' in node_config:
+            idx = 0
+            for item in node_config['globs']:
+                for idx, dev in enumerate(glob.glob(item.strip()), idx):
+                    mdir = "dev-{0}-{1}".format(idx, os.path.basename(dev))
+                    dev2dir[dev] = os.path.join(mount_root, mdir)
         else:
-            assert 'by_id' in node_config
-            dev_ids = [dev_id.strip() for dev_id in node_config['by_id']]
+            raise ValueError("Can't found any device config")
 
         st = Storage(name=name,
                      ip=ip,
                      rsync_ip=rsync_ip,
                      mount_root=node_config['root_dir'],
-                     devs=devs,
-                     by_id=dev_ids)
+                     dev2dir=dev2dir)
 
         nodes.storage.append(st)
         nodes.all_ip.add(ip)
@@ -390,7 +392,9 @@ def deploy_storage(config_path):
     assert mount_root != ""
     sudo("rmdir {0}/*".format(mount_root), warn_only=True)
 
+    xfs_opts = cfg['storage_nodes'].get("xfs_opts", "")
     for dev, mount_path in node.dev2dir.items():
+        sudo("mkfs.xfs -f {0} {1}".format(xfs_opts, dev))
         # sudo("mkfs.xfs -f " + dev)
         sudo("mkdir -p " + mount_path)
 
@@ -504,7 +508,7 @@ def deploy_testnode(all_proxy):
     # run("git clone https://github.com/markseger/getput.git")
 
     swift_rc = swift_rc_templ.format(all_proxy[0],
-    							     ",".join(ip for ip in all_proxy))
+                                     ",".join(ip for ip in all_proxy))
     put(remote_path='swiftrc',
         local_path=StringIO(swift_rc))
 
@@ -526,28 +530,28 @@ if __name__ == "__main__":
     if cmd == 'clear':
         pass
     else:
-        # execute(prepare, hosts=nodes.all_ip)
+        execute(prepare, hosts=nodes.all_ip)
 
-        # execute(stop_storage, hosts=all_stors)
-        # execute(stop_proxy, hosts=all_proxy)
-        # execute(stop_memcache, hosts=all_mcache)
+        execute(stop_storage, hosts=all_stors)
+        execute(stop_proxy, hosts=all_proxy)
+        execute(stop_memcache, hosts=all_mcache)
 
-        # execute(umount_all_swift, conf_path, hosts=all_stors)
+        execute(umount_all_swift, conf_path, hosts=all_stors)
 
-        # execute(deploy_memcache, hosts=all_mcache)
-        # execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
-        # execute(deploy_storage, conf_path, hosts=all_stors)
+        execute(deploy_memcache, hosts=all_mcache)
+        execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
+        execute(deploy_storage, conf_path, hosts=all_stors)
 
-        # execute(setup_configs, hosts=all_stors)
+        execute(setup_configs, hosts=all_stors)
 
-        # swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
-        # execute(save_swift_cfg, swift_cfg, hosts=all_swift)
+        swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
+        execute(save_swift_cfg, swift_cfg, hosts=all_swift)
 
-        # execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
+        execute(setup_rings, conf_path, hosts=[nodes.controler.ip])
 
-        # execute(start_memcache, hosts=all_mcache)
-        # execute(start_proxy, swift_cfg, hosts=all_proxy)
-        # execute(start_storage, swift_cfg, hosts=all_stors)
+        execute(start_memcache, hosts=all_mcache)
+        execute(start_proxy, swift_cfg, hosts=all_proxy)
+        execute(start_storage, swift_cfg, hosts=all_stors)
 
         execute(deploy_testnode, all_proxy, hosts=testnodes)
 
