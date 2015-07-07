@@ -1,5 +1,6 @@
+xfs_opts: "-d su=131072,sw=8 -i size=1024"
+
 storage_nodes:
-    xfs_opts: "-d su=131072,sw=8 -i size=1024"
     ictk0103r720-7:
         ip: 192.168.124.17
         rsync_ip: 192.168.124.17

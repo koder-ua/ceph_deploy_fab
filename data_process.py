@@ -24,7 +24,7 @@ def load_file(fname):
             times = [ttime for ttime, _ in data.values()]
 
             ips.extend(data.keys())
-            if min(times) * 1.3 < max(times):
+            if min(times) * 1.5 < max(times):
                 for _, node_res in data.values():
                     for (key, data) in node_res:
                         skipped += len(data)
@@ -153,26 +153,27 @@ def plot_data_over_time(raw_res, node_count):
 
 if __name__ == "__main__":
     raw_res, node_count = load_file(sys.argv[1])
-    plot_data_over_time(raw_res, node_count)
-    exit(1)
+    # plot_data_over_time(raw_res, node_count)
+    # exit(1)
     res, keys = process_data(raw_res, node_count)
+    print report(res, keys, node_count)
 
-    iops = []
-    iops_err = []
-    lat = []
-    marks = []
+    # iops = []
+    # iops_err = []
+    # lat = []
+    # marks = []
 
-    ttype = 'get'
-    ssize = '64k'
+    # ttype = 'get'
+    # ssize = '64k'
 
-    for key in keys:
-        test, size, th = key
-        if test == ttype and size == ssize:
-            io = res[key]['iops']
-            iops.append(io.average)
-            iops_err.append(io.confidence)
-            lat.append(res[key]['lat'].average)
-            marks.append(th * node_count)
+    # for key in keys:
+    #     test, size, th = key
+    #     if test == ttype and size == ssize:
+    #         io = res[key]['iops']
+    #         iops.append(io.average)
+    #         iops_err.append(io.confidence)
+    #         lat.append(res[key]['lat'].average)
+    #         marks.append(th * node_count)
 
-    io_chart("{0} {1}".format(ttype, ssize),
-             "iops", marks, iops, iops_err, lat, None)
+    # io_chart("{0} {1}".format(ttype, ssize),
+    #          "iops", marks, iops, iops_err, lat, None)

@@ -21,13 +21,11 @@ def run_tests(cmds, size, runtime, procs):
     cmd += './getput -c {cont} --obj test --size "{size}" --tests "{cmds}" '
     cmd += '--runtime {runtime} --proxies $SW_NODES --procs {procs} --preauthtoken $SW_TOKEN'
 
+    stime = time.time()
     with hide('stdout', 'stderr'):
-        t = time.time()
-        print "Node ", env.host, "start test at",  t
         res = run(cmd.format(cont=cont, cmds=cmds, size=size, runtime=runtime, procs=procs))
-        print "Node ", env.host, "finish test in",  int(time.time() - t)
 
-    return res
+    return time.time() - stime, res
 
 
 def start_collect_data():
@@ -81,54 +79,26 @@ def process(data):
     return dict(res.items())
 
 
-def report(res):
-    import texttable
-
-    keys = res.keys()
-    keys.sort(key=lambda x: (x[0], x[2], x[1]))
-    tab = texttable.Texttable(max_width=200)
-    tab.set_deco(tab.HEADER | tab.VLINES | tab.BORDER)
-    tab.set_cols_align(["l", "l", "r", "r", "r", "r"])
-
-    avg = lambda x: sum(map(float, x)) / len(x)
-
-    for key in keys:
-        test, size, proc = key
-        row = [
-            test, size, proc,
-            "{0:.1f}".format(round(avg([i["iops"] for i in res[key]]), 1)),
-            int(avg([i["lat"] for i in res[key]]) * 1000),
-            int(avg([i["lat"] for i in res[key]]))
-        ]
-        tab.add_row(row)
-
-    tab.header(["test", "size", "nthreads", "iops", "lat", "err"])
-
-    return tab.draw()
-
-
 if __name__ == "__main__":
     cfg = yaml.load(open(sys.argv[1]).read())
     test_nodes = [ip.strip() for ip in cfg['testnodes']]
 
     env.user = 'root'
 
-    all_res = []
-    for test in cfg['tests']:
-        test_res = collections.defaultdict(lambda: [])
-        for size in test['sizes']:
-            for procs in test['procs']:
-                res = execute(run_tests,
-                              cmds=test['cmds'],
-                              size=size,
-                              runtime=test['runtime'],
-                              procs=procs,
-                              hosts=test_nodes)
+    for rnd in range(7):
+        for test in cfg['tests']:
+            for size in test['sizes']:
+                for procs in test.get('procs', [1]):
+                    res = execute(run_tests,
+                                  cmds=test['cmds'],
+                                  size=size,
+                                  runtime=test['runtime'],
+                                  procs=procs,
+                                  hosts=test_nodes)
+                    test_res = {}
+                    for key, (test_time, val) in res.items():
+                        test_res[key] = [test_time, process(val).items()]
 
-                for key, val in res.items():
-                    test_res[key].append(process(val).items())
-        all_res.append(test_res)
-
-    print json.dumps(all_res)
+                    print "-" * 75
+                    print json.dumps(test_res)
     disconnect_all()
-
