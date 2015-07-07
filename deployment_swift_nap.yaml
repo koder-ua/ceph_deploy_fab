@@ -2,27 +2,26 @@ xfs_opts: "-d su=131072,sw=8 -i size=1024"
 replication: 1
 
 storage_nodes:
-    # ictk0103r720-7:
-    #     ip: 192.168.124.17
-    #     rsync_ip: 192.168.124.17
-    #     root_dir: /srv/node
-    #     globs:
-    #       - "/dev/mapper/36*"
+    ictk0103r720-7:
+        ip: 192.168.124.17
+        rsync_ip: 192.168.124.17
+        root_dir: /srv/node
+        globs:
+          - "/dev/mapper/36*"
 
-    # ictk0103r720-8:
-    #     ip: 192.168.124.18
-    #     rsync_ip: 192.168.124.18
-    #     root_dir: /srv/node
-    #     globs:
-    #       - "/dev/mapper/36*"
+    ictk0103r720-8:
+        ip: 192.168.124.18
+        rsync_ip: 192.168.124.18
+        root_dir: /srv/node
+        globs:
+          - "/dev/mapper/36*"
 
-    # ictk0103r720-9:
-    #     ip: 192.168.124.19
-    #     rsync_ip: 192.168.124.19
-    #     root_dir: /srv/node
-    #     globs:
-    #       - "/dev/mapper/36*"
-
+    ictk0103r720-9:
+        ip: 192.168.124.19
+        rsync_ip: 192.168.124.19
+        root_dir: /srv/node
+        globs:
+          - "/dev/mapper/36*"
 
     ictk0103r720-10:
         ip: 192.168.124.10
@@ -34,9 +33,9 @@ storage_nodes:
 memcache_node: 192.168.124.18
 
 proxy_nodes:
-    # ictk0103r720-7: 192.168.124.17
-    # ictk0103r720-8: 192.168.124.18
-    # ictk0103r720-9: 192.168.124.19
+    ictk0103r720-7: 192.168.124.17
+    ictk0103r720-8: 192.168.124.18
+    ictk0103r720-9: 192.168.124.19
     ictk0103r720-10: 192.168.124.10
 
 testnodes:
