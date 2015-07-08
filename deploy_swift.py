@@ -250,11 +250,15 @@ def setup_rings(nodes, cfg):
 
         for ring, port in ring_port:
             # Account ring
-            sudo("swift-ring-builder {ring} create 10 {replication} 1".format(ring=ring),
-                 user='swift', replication=cfg['replication'])
+            cmd = "swift-ring-builder {ring} create 10 {replication} 1"
+            sudo(cmd.format(ring=ring, replication=cfg['replication']),
+                 user='swift')
             forall_devs("swift-ring-builder {ring} add r1z1-{{ip}}:{port}/{{dev}} 100".format(
                 ring=ring, port=port))
-            sudo("swift-ring-builder {ring} rebalance".format(ring=ring), user='swift')
+
+            warn_only = (int(cfg['replication']) <= 1)
+            sudo("swift-ring-builder {ring} rebalance".format(ring=ring),
+                 user='swift', warn_only=warn_only)
             sudo("swift-ring-builder {ring}".format(ring=ring), user='swift')
 
         all_ips = list(set(nodes.all_ip) - set(get_ips().split()))
@@ -547,20 +551,20 @@ if __name__ == "__main__":
     else:
         # execute(prepare, hosts=nodes.all_ip)
 
-        execute(stop_storage, hosts=all_stors)
-        execute(stop_proxy, hosts=all_proxy)
-        execute(stop_memcache, hosts=all_mcache)
+        # execute(stop_storage, hosts=all_stors)
+        # execute(stop_proxy, hosts=all_proxy)
+        # execute(stop_memcache, hosts=all_mcache)
 
-        execute(umount_all_swift, nodes, cfg, hosts=all_stors)
+        # execute(umount_all_swift, nodes, cfg, hosts=all_stors)
 
-        execute(deploy_memcache, hosts=all_mcache)
-        execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
-        execute(deploy_storage, nodes, cfg, hosts=all_stors)
+        # execute(deploy_memcache, hosts=all_mcache)
+        # execute(deploy_proxy, all_mcache[0], hosts=all_proxy)
+        # execute(deploy_storage, nodes, cfg, hosts=all_stors)
 
-        execute(setup_configs, hosts=all_stors)
+        # execute(setup_configs, hosts=all_stors)
 
-        swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
-        execute(save_swift_cfg, swift_cfg, hosts=all_swift)
+        # swift_cfg = get_swift_cfg(all_stors, all_proxy, all_mcache)
+        # execute(save_swift_cfg, swift_cfg, hosts=all_swift)
 
         execute(setup_rings, nodes, cfg, hosts=[nodes.controler.ip])
 
