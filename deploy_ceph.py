@@ -1,6 +1,7 @@
 import sys
 import json
 import uuid
+import socket
 import os.path
 from StringIO import StringIO
 
@@ -49,7 +50,7 @@ def get_distro():
 
 
 @task
-def prepare_node(ceph_release):
+def prepare_node(ceph_release, hosts_file):
     if 'rh' == get_distro():
         repo_fc = rpm_repo.format(release='el7', ceph_release=ceph_release)
         sudo("systemctl stop firewalld.service", warn_only=True)
@@ -64,6 +65,8 @@ def prepare_node(ceph_release):
             sudo("yum -y install epel-release")
             sudo("yum -y update")
             sudo("yum -y install yum-plugin-priorities ntp ntpdate ntp-doc ceph")
+
+        ntp_service = 'ntpd'
     else:
         add_ceph_dev_repo_keys = "wget -q -O- " + \
                                  "'https://ceph.com/git/?p=ceph.git" + \
@@ -80,12 +83,20 @@ def prepare_node(ceph_release):
         with hide('stdout', 'stderr'):
             sudo("apt-get update")
             sudo("apt-get install -y ntp ceph ceph-mds")
+        ntp_service = 'ntp'
+
+    fc = StringIO()
+    get(remote_path='/etc/hosts', local_path=fc)
+    val = fc.getvalue() + "\n" + \
+        "\n".join("{0} {1}".format(ip, host)
+                  for host, ip in hosts_file.items())
+    put(remote_path='/etc/hosts', local_path=StringIO(val), use_sudo=True)
 
     sudo("rm /etc/localtime")
     sudo("cp /usr/share/zoneinfo/Europe/Kiev /etc/localtime")
-    sudo("service ntpd stop", warn_only=True)
+    sudo("service " + ntp_service + " stop", warn_only=True)
     sudo("ntpdate pool.ntp.org")
-    sudo("service ntpd start")
+    sudo("service " + ntp_service + " start")
 
 
 def get_config(conf_path):
@@ -100,7 +111,7 @@ def get_config(conf_path):
     Params.ceph_cfg_path = Params.ceph_cfg_path.format(Params)
     Params.mon_keyring_path = Params.mon_keyring_path.format(Params)
     Params.admin_keyring_path = Params.admin_keyring_path.format(Params)
-    Params.first_mon_ip = Params.mons_ip.split(',')[0].strip()
+    Params.first_mon_ip = socket.gethostbyname(Params.mons[0])
 
     return Params
 
@@ -109,8 +120,9 @@ ceph_config_templ = """
 [global]
 
 fsid = {0.fsid_uuid}
-mon initial members = {0.mons}
-mon host = {1}
+mon initial members = {1}
+mon host = {2}
+mon addr = {2}:6789
 public network = {0.pub_network}
 cluster network = {0.cluster_network}
 auth cluster required = cephx
@@ -132,13 +144,15 @@ osd crush chooseleaf type = {0.crush_chooseleaf_type}
 
 
 @task
-def deploy_first_mon(config_path, mon_ip):
+def deploy_first_mon(config_path, mon_ip, hosts_file):
     params = get_config(config_path)
     params.fsid_uuid = str(uuid.uuid4())
 
-    prepare_node(params.ceph_release)
-
-    ceph_config_file = ceph_config_templ.format(params, env.host_string)
+    prepare_node(params.ceph_release, hosts_file)
+    mons = ",".join(params.mons)
+    ceph_config_file = ceph_config_templ.format(params,
+                                                mons,
+                                                mon_ip)
 
     if params.fs_type == 'ext4':
         ceph_config_file += '\nfilestore xattr use omap = true\n'
@@ -332,13 +346,13 @@ def up_node(conf_path):
 
 @task
 @parallel
-def add_new_osd(conf_path):
+def add_new_osd(conf_path, hosts_file):
     params = get_config(conf_path)
     assert params.fs_type == 'xfs'
     mon_ip = params.first_mon_ip
 
     if not exists(params.ceph_cfg_path):
-        prepare_node(params.ceph_release)
+        prepare_node(params.ceph_release, hosts_file)
         cfg, adm = execute(read_config, params, hosts=[mon_ip])[mon_ip]
 
         put(remote_path=params.ceph_cfg_path,
@@ -548,7 +562,17 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     conf_path = sys.argv[2]
     cfg = yaml.load(open(conf_path).read())
-    env.user = 'root'
+    env.user = 'koder'
+
+    hosts_file = {}
+
+    for host in cfg['mons']:
+        print host
+        hosts_file[host] = socket.gethostbyname(host)
+
+    for host in cfg['osd']:
+        print host
+        hosts_file[host] = socket.gethostbyname(host)
 
     if cmd == 'clear':
 
@@ -562,16 +586,18 @@ if __name__ == "__main__":
             execute(clear_node, conf_path, hosts=[host])
     else:
         assert cmd == 'install'
-        first_mon = cfg['mons'].split(',')[0].strip()
-        first_mon_ip = cfg['mons_ip'].split(',')[0].strip()
+        first_mon = cfg['mons'][0]
 
-        execute(deploy_first_mon, conf_path, first_mon_ip,
+        execute(deploy_first_mon,
+                conf_path,
+                hosts_file[first_mon],
+                hosts_file,
                 hosts=[first_mon])
 
         for host, _ in cfg['osd'].items():
-            execute(add_new_osd, conf_path, hosts=[host])
+            execute(add_new_osd, conf_path, hosts_file, hosts=[host])
 
-        for host in cfg['rgw'].split():
-            execute(radosgw_centos, hosts=[host])
+        # for host in cfg['rgw'].split():
+        #     execute(radosgw_centos, hosts=[host])
 
     disconnect_all()

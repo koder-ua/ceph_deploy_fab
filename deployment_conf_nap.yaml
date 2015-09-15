@@ -18,8 +18,7 @@ osd_weigth: "1.0"
 pub_network: 192.168.124.0/24
 cluster_network: 192.168.126.0/24
 
-mons: ictk0103r720-7
-mons_ip: 10.251.230.17
+mons: ["ictk0103r720-7"]
 rgw: ictk0103r720-7
 osd:
     "ictk0103r720-7":

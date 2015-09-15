@@ -2,8 +2,8 @@
 set -e
 
 IMGS_DIR=/media/vms/tiny_cloud
-DATA_SZ=5G
-JOURNAL_SZ=1G
+DATA_SZ=40G
+JOURNAL_SZ=6G
 
 function usage() {
 	echo "Usage: [util] USER_NAME PASSWORD"

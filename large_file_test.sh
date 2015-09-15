@@ -5,7 +5,7 @@ set -o pipefail
 
 fname=data.bin
 
-# dd if=/dev/zero of=$fname bs=1048576 count=80960
+dd if=/dev/zero of=$fname bs=1048576 count=80960
 
 for count in `seq 5` ; do
 

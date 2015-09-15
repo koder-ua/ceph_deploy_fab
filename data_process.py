@@ -1,9 +1,13 @@
+import re
 import sys
 import json
 import texttable
 import collections
 
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 from statistic import data_property
 
@@ -151,13 +155,97 @@ def plot_data_over_time(raw_res, node_count):
     plt.show()
 
 
+def load_table_file(fname, node_count):
+    data = open(fname).read()
+    parts = [r"(?P<oper>del|put|get)",
+             r"(?P<size>.*?)",
+             r"(?P<threads>\d+?)",
+             r"(?P<iops>\d+)\s*~\s*(?P<iops_conf>\d+)",
+             r"(?P<lat>\d+)\s*~\s*(?P<lat_conf>\d+)"]
+
+    rr_s = r"\|\s*" + r"\s*\|\s*".join(parts) + r"\s*\|"
+    rr = re.compile(rr_s)
+    res = {}
+    keys = set()
+
+    class Val(object):
+        def __init__(self, avg, conf):
+            self.average = avg
+            self.confidence = conf
+
+    for part in rr.finditer(data):
+        key = part.group('oper'), part.group('size'), int(part.group('threads')) / node_count
+        keys.add(key)
+        res[key] = {'iops': Val(int(part.group('iops')), int(part.group('iops_conf'))),
+                    'lat': Val(int(part.group('lat')), int(part.group('lat_conf'))),
+                    'errs': Val(0, 0)
+                    }
+    keys = sorted(keys, key=lambda x: (x[0], ssize2b(x[1]), x[2]))
+    return res, keys
+
+
+def report_compare(res1, res2, keys, node_count):
+    tab = texttable.Texttable(max_width=200)
+    tab.set_deco(tab.HEADER | tab.VLINES | tab.BORDER)
+    tab.set_cols_align(["l", "l", "r", "r", "r"])
+
+    pkey = None
+
+    header = ["test", "size", "nthreads", "diff %\niops1\n/iops2", "diff %\nlat1\n/lat2"]
+    tab.header(header)
+    sep = ['-' * len(i.split("\n")[0]) for i in header]
+
+    for key in keys:
+        if pkey is not None and pkey[:2] != key[:2]:
+            tab.add_row(sep)
+
+        pkey = key
+        test, size, proc = key
+
+        if key in res1 and key in res2:
+            iops = float(res1[key]["iops"].average) / res2[key]["iops"].average
+            lat = float(res1[key]["lat"].average) / res2[key]["lat"].average
+
+            def to_perc(x):
+                return "{0:+d}".format(int((x - 1.0) * 100))
+
+            iops_perc = to_perc(iops)
+            lat_perc = to_perc(lat)
+            row = [
+                test, size, proc * node_count,
+                iops_perc, lat_perc,
+            ]
+            tab.add_row(row)
+
+    return tab.draw()
+
+
+def load_and_process_file(fname):
+    if ':' in fname:
+        fname, node_count_s = fname.split(":")
+        node_count = int(node_count_s)
+        res, keys = load_table_file(fname, node_count)
+    else:
+        raw_res, node_count = load_file(fname)
+        res, keys = process_data(raw_res, node_count)
+    return res, keys, node_count
+
+
 if __name__ == "__main__":
-    raw_res, node_count = load_file(sys.argv[1])
+    if len(sys.argv) == 2:
+        res, keys, node_count = load_and_process_file(sys.argv[1])
+        print report(res, keys, node_count)
+    else:
+        assert len(sys.argv) == 3
+        res1, keys1, node_count1 = load_and_process_file(sys.argv[1])
+        res2, keys2, node_count2 = load_and_process_file(sys.argv[2])
+        assert node_count1 == node_count2
+        keys = set(keys1) | set(keys2)
+        keys = sorted(keys, key=lambda x: (x[0], ssize2b(x[1]), x[2]))
+        print report_compare(res1, res2, keys, node_count1)
+
     # plot_data_over_time(raw_res, node_count)
     # exit(1)
-    res, keys = process_data(raw_res, node_count)
-    print report(res, keys, node_count)
-
     # iops = []
     # iops_err = []
     # lat = []

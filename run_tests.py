@@ -85,20 +85,27 @@ if __name__ == "__main__":
 
     env.user = 'root'
 
-    for rnd in range(7):
-        for test in cfg['tests']:
+    for test in cfg['tests']:
+        for rnd in range(test['rounds']):
             for size in test['sizes']:
                 for procs in test.get('procs', [1]):
-                    res = execute(run_tests,
-                                  cmds=test['cmds'],
-                                  size=size,
-                                  runtime=test['runtime'],
-                                  procs=procs,
-                                  hosts=test_nodes)
-                    test_res = {}
-                    for key, (test_time, val) in res.items():
-                        test_res[key] = [test_time, process(val).items()]
+                    for i in range(5):
+                        try:
+                            res = execute(run_tests,
+                                          cmds=test['cmds'],
+                                          size=size,
+                                          runtime=test['runtime'],
+                                          procs=procs,
+                                          hosts=test_nodes)
+                            test_res = {}
+                            for key, (test_time, val) in res.items():
+                                test_res[key] = [test_time, process(val).items()]
 
-                    print "-" * 75
-                    print json.dumps(test_res)
+                            print "-" * 75
+                            print json.dumps(test_res)
+                            break
+                        except (SystemExit, Exception) as exc:
+                            print "Failed:", exc
+                            time.sleep(5)
+
     disconnect_all()

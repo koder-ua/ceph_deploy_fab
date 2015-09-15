@@ -15,5 +15,17 @@ mon_keyring_path: /tmp/{0.clustername}.mon.keyring
 admin_keyring_path: /etc/ceph/{0.clustername}.client.admin.keyring
 mount_opst: ""
 osd_weigth: "1.0"
-pub_network: 192.168.124.0/24
-cluster_network: 192.168.126.0/24
+pub_network: 192.168.152.0/24
+cluster_network: 192.168.152.0/24
+
+mons: ['ceph-mon']
+# rgw: ictk0103r720-7
+osd:
+    "ceph-osd-0":
+        storage: /dev/sdb
+
+    "ceph-osd-1":
+        storage: /dev/sdb
+
+    "ceph-osd-2":
+        storage: /dev/sdb

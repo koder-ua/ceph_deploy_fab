@@ -8,15 +8,17 @@ testnodes:
 
 
 tests:
-  - cmds: "p,g,d"
-    sizes:
-      - "4k"
-      - "64k"
-      - "1m"
-    runtime: 150
-    procs: [10, 20, 40, 60, 80, 10]
-  # - cmds: "p,d"
+  # - cmds: "p,g,d"
+  #   rounds: 7
   #   sizes:
   #     - "4k"
-  #   runtime: 5
-  #   procs: [30]
+  #     - "64k"
+  #     - "1m"
+  #   runtime: 30
+  #   procs: [20, 40, 60, 100]
+  - cmds: "p"
+    sizes:
+      - "64k"
+    runtime: 30
+    procs: [60]
+    rounds: 30
